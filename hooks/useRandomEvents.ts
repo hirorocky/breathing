@@ -1,28 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EVENT_CONFIG } from "@/lib/events/config";
+import { getEventConfig, type EventTimingConfig } from "@/lib/events/config";
 import { pickRandomEventType } from "@/components/events/registry";
 import type { ActiveEvent } from "@/lib/events/types";
 
-function randomIntervalMs(): number {
-  const { minIntervalMs, maxIntervalMs } = EVENT_CONFIG;
-  return minIntervalMs + Math.random() * (maxIntervalMs - minIntervalMs);
+function randomIntervalMs(config: EventTimingConfig): number {
+  return (
+    config.minIntervalMs +
+    Math.random() * (config.maxIntervalMs - config.minIntervalMs)
+  );
 }
 
 type Options = {
   /** false の間はスケジュールも表示も止める */
   enabled?: boolean;
+  /** true のとき短いイベント間隔を使う */
+  debug?: boolean;
 };
 
 /**
  * 静かにランダムイベントをスケジュールする。
  * 同時に 1 つだけ。終了後、ランダムな間隔で次を予約する。
  */
-export function useRandomEvents({ enabled = true }: Options = {}) {
+export function useRandomEvents({ enabled = true, debug = false }: Options = {}) {
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null);
   const [nextFireAt, setNextFireAt] = useState<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const enabledRef = useRef(enabled);
+  const debugRef = useRef(debug);
   enabledRef.current = enabled;
+  debugRef.current = debug;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -57,10 +63,10 @@ export function useRandomEvents({ enabled = true }: Options = {}) {
 
   const completeEvent = useCallback(() => {
     setActiveEvent(null);
-    scheduleNext(randomIntervalMs());
+    const config = getEventConfig(debugRef.current);
+    scheduleNext(randomIntervalMs(config));
   }, [scheduleNext]);
 
-  // 初回スケジュール / enabled 切り替え
   useEffect(() => {
     if (!enabled) {
       clearTimer();
@@ -70,11 +76,12 @@ export function useRandomEvents({ enabled = true }: Options = {}) {
     }
 
     if (activeEvent === null && timerRef.current === null) {
-      scheduleNext(EVENT_CONFIG.initialDelayMs);
+      const config = getEventConfig(debug);
+      scheduleNext(config.initialDelayMs);
     }
 
     return clearTimer;
-  }, [enabled, activeEvent, scheduleNext, clearTimer]);
+  }, [enabled, debug, activeEvent, scheduleNext, clearTimer]);
 
   return { activeEvent, completeEvent, nextFireAt };
 }
