@@ -20,17 +20,20 @@ type Props = {
 export function DriftField({ words }: Props) {
   const [drifts, setDrifts] = useState<Drift[]>([]);
   const nextId = useRef(0);
+  const wordsRef = useRef(words);
+  wordsRef.current = words;
 
   useEffect(() => {
-    if (words.length === 0) return;
-
     let cancelled = false;
     let timerId = 0;
 
     const surfaceWord = () => {
       if (cancelled) return;
 
-      const word = pickRandom(words);
+      const pool = wordsRef.current;
+      if (pool.length === 0) return;
+
+      const word = pickRandom(pool);
       const id = ++nextId.current;
       const fromBelow = Math.random() < 0.5;
 
@@ -67,7 +70,7 @@ export function DriftField({ words }: Props) {
       cancelled = true;
       window.clearTimeout(timerId);
     };
-  }, [words]);
+  }, []);
 
   return (
     <div className="driftfield" aria-hidden="true">

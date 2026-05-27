@@ -1,25 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
-
 type Props = {
   open: boolean;
   onClose: () => void;
 };
 
-/** ? ボタンで開く説明。押すまで UI は説明しすぎない */
+/** ? ボタンで開く説明。Esc は Space 側のキーボード処理で閉じる */
 export function HelpOverlay({ open, onClose }: Props) {
-  useEffect(() => {
-    if (!open) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
-
   return (
     <div
       className={`help-overlay${open ? " open" : ""}`}
