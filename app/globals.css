@@ -234,12 +234,16 @@ body::after {
   );
   box-shadow: 0 0 18px oklch(0.78 0.06 55 / 0.22);
   opacity: 0.42;
-  animation: rippleFade 1.2s ease-out forwards;
+  animation: rippleFade 1.4s ease-out forwards;
 }
 
 @keyframes rippleFade {
   0% {
     transform: scale(0.18);
+    opacity: 0;
+  }
+
+  12% {
     opacity: 0.42;
   }
 

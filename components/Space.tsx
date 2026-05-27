@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { EventDebugPanel } from "@/components/events/EventDebugPanel";
 import { EventLayer } from "@/components/events/EventLayer";
 import { BreathForm } from "@/components/BreathForm";
@@ -14,6 +14,7 @@ import { WordBar } from "@/components/WordBar";
 import { useBreathEngine } from "@/hooks/useBreathEngine";
 import { useDebugMode } from "@/hooks/useDebugMode";
 import { useInteractionState } from "@/hooks/useInteractionState";
+import { useAnimationFrame } from "@/hooks/useAnimationFrame";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useRandomEvents } from "@/hooks/useRandomEvents";
 import { CONFIG, SEED_WORDS } from "@/lib/constants";
@@ -44,6 +45,19 @@ export function Space() {
     y: 0,
     active: false,
     pressed: false,
+  });
+  const pointerTargetRef = useRef({
+    x: 0,
+    y: 0,
+    active: false,
+    pressed: false,
+  });
+  const pointerSmoothRef = useRef({
+    x: 0,
+    y: 0,
+    active: false,
+    pressed: false,
+    amount: 0,
   });
   const breathRef = useRef<HTMLButtonElement | null>(null);
   const warpImageRef = useRef<SVGFEImageElement | null>(null);
@@ -148,44 +162,65 @@ export function Space() {
       const target = event.target as HTMLElement;
       if (target.closest(INTERACTIVE_SELECTOR)) return;
       triggerRipple(event.clientX, event.clientY);
-      setPointer((p) => ({
-        ...p,
+      pointerTargetRef.current = {
+        ...pointerTargetRef.current,
         x: event.clientX,
         y: event.clientY,
         active: true,
         pressed: true,
-      }));
+      };
     },
     [triggerRipple],
   );
 
-  useEffect(() => {
+  useAnimationFrame(() => {
     const el = breathRef.current;
     const img = warpImageRef.current;
     const disp = warpDispRef.current;
     if (!el || !img || !disp) return;
 
-    if (!pointer.active) {
+    const target = pointerTargetRef.current;
+    const smooth = pointerSmoothRef.current;
+
+    // 位置はゆっくり追従（指/マウスの“押し”感）
+    const posLerp = 0.12;
+    smooth.x += (target.x - smooth.x) * posLerp;
+    smooth.y += (target.y - smooth.y) * posLerp;
+    smooth.active = target.active;
+    smooth.pressed = target.pressed;
+
+    // 強度はさらにゆっくり追従
+    const desiredAmount = !smooth.active
+      ? 0
+      : smooth.pressed
+        ? 2.2
+        : 0.55;
+    const amtLerp = 0.07;
+    smooth.amount += (desiredAmount - smooth.amount) * amtLerp;
+
+    if (smooth.amount < 0.02) {
       disp.setAttribute("scale", "0");
       return;
     }
 
     const rect = el.getBoundingClientRect();
-    const ux = Math.min(1, Math.max(0, (pointer.x - rect.left) / rect.width));
-    const uy = Math.min(1, Math.max(0, (pointer.y - rect.top) / rect.height));
+    const ux = Math.min(1, Math.max(0, (smooth.x - rect.left) / rect.width));
+    const uy = Math.min(1, Math.max(0, (smooth.y - rect.top) / rect.height));
 
-    // マウス: 置くだけでも歪む / タッチ: 押している間だけ歪む（指を置く=press扱い）
-    const amount = pointer.pressed ? 2.2 : 0.55;
-    const scale = amount * 70;
+    const scale = smooth.amount * 70;
     disp.setAttribute("scale", scale.toFixed(2));
 
-    // マスク半径も少し広げて「押された範囲」を大きくする
     const maskSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1' preserveAspectRatio='none'><defs><radialGradient id='g' cx='${ux}' cy='${uy}' r='0.52'><stop offset='0' stop-color='white' stop-opacity='1'/><stop offset='0.55' stop-color='white' stop-opacity='0.65'/><stop offset='1' stop-color='black' stop-opacity='0'/></radialGradient></defs><rect width='1' height='1' fill='url(#g)'/></svg>`;
-    img.setAttribute(
-      "href",
-      `data:image/svg+xml;utf8,${encodeURIComponent(maskSvg)}`,
-    );
-  }, [pointer]);
+    img.setAttribute("href", `data:image/svg+xml;utf8,${encodeURIComponent(maskSvg)}`);
+
+    // pointerglow 用の見た目も同じ滑らかさに合わせる
+    setPointer({
+      x: smooth.x,
+      y: smooth.y,
+      active: smooth.active,
+      pressed: smooth.pressed,
+    });
+  }, true);
 
   return (
     <div
@@ -199,19 +234,41 @@ export function Space() {
       }
       onPointerDown={handleSpacePointerDown}
       onPointerMove={(event) => {
-        setPointer((p) => ({
-          ...p,
+        // pointerglow 表示は rAF 側で滑らかに更新する
+        pointerTargetRef.current = {
+          ...pointerTargetRef.current,
           x: event.clientX,
           y: event.clientY,
           active: true,
-        }));
+        };
       }}
-      onPointerUp={() => setPointer((p) => ({ ...p, active: false, pressed: false }))}
+      onPointerUp={() => {
+        pointerTargetRef.current = {
+          ...pointerTargetRef.current,
+          active: false,
+          pressed: false,
+        };
+        setPointer((p) => ({ ...p, active: false, pressed: false }));
+      }}
       onPointerCancel={() =>
-        setPointer((p) => ({ ...p, active: false, pressed: false }))
+        (() => {
+          pointerTargetRef.current = {
+            ...pointerTargetRef.current,
+            active: false,
+            pressed: false,
+          };
+          setPointer((p) => ({ ...p, active: false, pressed: false }));
+        })()
       }
       onPointerLeave={() =>
-        setPointer((p) => ({ ...p, active: false, pressed: false }))
+        (() => {
+          pointerTargetRef.current = {
+            ...pointerTargetRef.current,
+            active: false,
+            pressed: false,
+          };
+          setPointer((p) => ({ ...p, active: false, pressed: false }));
+        })()
       }
     >
       <svg
