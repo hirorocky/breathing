@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { forwardRef, type CSSProperties } from "react";
 
 type Props = {
   touchBoost: number;
@@ -8,7 +8,8 @@ type Props = {
 };
 
 /** 中心の呼吸する形 — ring / glow / core の 3 層 */
-export function BreathForm({ touchBoost, onBreathClick }: Props) {
+export const BreathForm = forwardRef<HTMLButtonElement, Props>(
+  ({ touchBoost, onBreathClick }, ref) => {
   const style = {
     "--touch-boost": touchBoost,
   } as CSSProperties;
@@ -18,6 +19,7 @@ export function BreathForm({ touchBoost, onBreathClick }: Props) {
       type="button"
       className="breath"
       style={style}
+      ref={ref}
       aria-label="呼吸している形"
       onClick={(event) => {
         event.stopPropagation();
@@ -29,4 +31,6 @@ export function BreathForm({ touchBoost, onBreathClick }: Props) {
       <div className="core" aria-hidden="true" />
     </button>
   );
-}
+  },
+);
+BreathForm.displayName = "BreathForm";

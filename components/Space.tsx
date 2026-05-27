@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventDebugPanel } from "@/components/events/EventDebugPanel";
 import { EventLayer } from "@/components/events/EventLayer";
 import { BreathForm } from "@/components/BreathForm";
@@ -34,11 +34,20 @@ export function Space() {
   const [wordBarSession, setWordBarSession] = useState(0);
   const [wordBarInitialChar, setWordBarInitialChar] = useState("");
   const [incomingWord, setIncomingWord] = useState<string | null>(null);
-  const [pointer, setPointer] = useState<{ x: number; y: number; active: boolean }>({
+  const [pointer, setPointer] = useState<{
+    x: number;
+    y: number;
+    active: boolean;
+    pressed: boolean;
+  }>({
     x: 0,
     y: 0,
     active: false,
+    pressed: false,
   });
+  const breathRef = useRef<HTMLButtonElement | null>(null);
+  const warpImageRef = useRef<SVGFEImageElement | null>(null);
+  const warpDispRef = useRef<SVGFEDisplacementMapElement | null>(null);
 
   const { debug, toggleDebug } = useDebugMode();
 
@@ -139,9 +148,44 @@ export function Space() {
       const target = event.target as HTMLElement;
       if (target.closest(INTERACTIVE_SELECTOR)) return;
       triggerRipple(event.clientX, event.clientY);
+      setPointer((p) => ({
+        ...p,
+        x: event.clientX,
+        y: event.clientY,
+        active: true,
+        pressed: true,
+      }));
     },
     [triggerRipple],
   );
+
+  useEffect(() => {
+    const el = breathRef.current;
+    const img = warpImageRef.current;
+    const disp = warpDispRef.current;
+    if (!el || !img || !disp) return;
+
+    if (!pointer.active) {
+      disp.setAttribute("scale", "0");
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const ux = Math.min(1, Math.max(0, (pointer.x - rect.left) / rect.width));
+    const uy = Math.min(1, Math.max(0, (pointer.y - rect.top) / rect.height));
+
+    // マウス: 置くだけでも歪む / タッチ: 押している間だけ歪む（指を置く=press扱い）
+    const amount = pointer.pressed ? 2.2 : 0.55;
+    const scale = amount * 70;
+    disp.setAttribute("scale", scale.toFixed(2));
+
+    // マスク半径も少し広げて「押された範囲」を大きくする
+    const maskSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1' preserveAspectRatio='none'><defs><radialGradient id='g' cx='${ux}' cy='${uy}' r='0.52'><stop offset='0' stop-color='white' stop-opacity='1'/><stop offset='0.55' stop-color='white' stop-opacity='0.65'/><stop offset='1' stop-color='black' stop-opacity='0'/></radialGradient></defs><rect width='1' height='1' fill='url(#g)'/></svg>`;
+    img.setAttribute(
+      "href",
+      `data:image/svg+xml;utf8,${encodeURIComponent(maskSvg)}`,
+    );
+  }, [pointer]);
 
   return (
     <div
@@ -155,11 +199,74 @@ export function Space() {
       }
       onPointerDown={handleSpacePointerDown}
       onPointerMove={(event) => {
-        if (event.pointerType !== "mouse") return;
-        setPointer({ x: event.clientX, y: event.clientY, active: true });
+        setPointer((p) => ({
+          ...p,
+          x: event.clientX,
+          y: event.clientY,
+          active: true,
+        }));
       }}
-      onPointerLeave={() => setPointer((p) => ({ ...p, active: false }))}
+      onPointerUp={() => setPointer((p) => ({ ...p, active: false, pressed: false }))}
+      onPointerCancel={() =>
+        setPointer((p) => ({ ...p, active: false, pressed: false }))
+      }
+      onPointerLeave={() =>
+        setPointer((p) => ({ ...p, active: false, pressed: false }))
+      }
     >
+      <svg
+        className="breath-warp-defs"
+        width="0"
+        height="0"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <filter
+          id="breathWarp"
+          x="-25%"
+          y="-25%"
+          width="150%"
+          height="150%"
+          colorInterpolationFilters="sRGB"
+        >
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.018"
+            numOctaves="2"
+            seed="2"
+            result="noise"
+          />
+          <feDisplacementMap
+            in="SourceGraphic"
+            in2="noise"
+            scale="0"
+            xChannelSelector="R"
+            yChannelSelector="G"
+            result="warped"
+            ref={(node) => {
+              warpDispRef.current = node;
+            }}
+          />
+          <feImage
+            href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201%201%27%20preserveAspectRatio%3D%27none%27%3E%3Crect%20width%3D%271%27%20height%3D%271%27%20fill%3D%27black%27%2F%3E%3C%2Fsvg%3E"
+            result="mask"
+            ref={(node) => {
+              warpImageRef.current = node;
+            }}
+          />
+          <feComposite in="warped" in2="mask" operator="in" result="warpMasked" />
+          <feComposite
+            in="SourceGraphic"
+            in2="mask"
+            operator="out"
+            result="sourceOutside"
+          />
+          <feMerge>
+            <feMergeNode in="sourceOutside" />
+            <feMergeNode in="warpMasked" />
+          </feMerge>
+        </filter>
+      </svg>
       <SiteChrome presenceCount={presenceCount} />
       <Orbs count={CONFIG.orbCount} sessionSeed={sessionSeed} />
       <RippleField ripples={ripples} pointer={pointer} />
@@ -172,7 +279,11 @@ export function Space() {
       <EventLayer activeEvent={activeEvent} onComplete={completeEvent} />
 
       <main className="stage">
-        <BreathForm touchBoost={touchBoost} onBreathClick={triggerBreathClick} />
+        <BreathForm
+          ref={breathRef}
+          touchBoost={touchBoost}
+          onBreathClick={triggerBreathClick}
+        />
       </main>
 
       <WordBar

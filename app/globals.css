@@ -80,8 +80,18 @@ body::after {
   background: none;
   cursor: default;
   transform: scale(var(--bx), var(--by));
-  will-change: transform;
+  will-change: transform, filter;
   --touch-boost: 0;
+}
+
+.breath-warp-defs {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.breath {
+  filter: url(#breathWarp);
 }
 
 .breath .ring {
