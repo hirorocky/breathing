@@ -7,6 +7,8 @@ type Sediment = {
   id: number;
   word: string;
   settleMs: number;
+  x: number;
+  y: number;
 };
 
 type Props = {
@@ -16,7 +18,7 @@ type Props = {
   onIncomingHandled: () => void;
 };
 
-/** 置いた言葉が、しばらく沈んでから漂い始める */
+/** 置いた言葉が、ランダムな位置でしばらく沈んでから漂い始める */
 export function SedimentField({
   incoming,
   onSettled,
@@ -35,7 +37,10 @@ export function SedimentField({
       INTERACTION.sedimentMinMs +
       Math.random() * (INTERACTION.sedimentMaxMs - INTERACTION.sedimentMinMs);
     const id = ++nextId.current;
-    setSediments((current) => [...current, { id, word, settleMs }]);
+    const x = 6 + Math.random() * 88;
+    const y = 12 + Math.random() * 72;
+
+    setSediments((current) => [...current, { id, word, settleMs, x, y }]);
 
     const timerId = window.setTimeout(() => {
       setSediments((current) => current.filter((s) => s.id !== id));
@@ -53,6 +58,8 @@ export function SedimentField({
           className="sedimentword"
           style={
             {
+              left: `${sediment.x}%`,
+              top: `${sediment.y}%`,
               "--sediment-ms": `${sediment.settleMs}ms`,
             } as CSSProperties
           }

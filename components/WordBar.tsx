@@ -43,7 +43,7 @@ function ActiveWordBar({ initialChar, onClose, onPlace }: ActiveWordBarProps) {
         onBlur={() => {
           if (!value.trim()) onClose();
         }}
-        placeholder="ひとこと、降ろす"
+        placeholder="ことばにする"
         spellCheck={false}
         autoFocus
       />
@@ -80,7 +80,6 @@ export function WordBar({
           onPlace={onPlace}
         />
       )}
-      <div className="type-hint">— キーボードを叩くと、ひとこと置いていける</div>
     </>
   );
 }

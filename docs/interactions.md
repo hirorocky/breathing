@@ -21,7 +21,7 @@
 ### Layer 0 — 呼吸（常時）
 
 - `useBreathEngine` が `--bx` / `--by` / `--bo` を更新
-- 対象: 背景 wash、中心の形、chrome の dot、companion（出現時）
+- 対象: 背景 wash、中心の形、chrome の dot
 - 周期: 8s 基準 + instability 0.6。ユーザー操作では変えない
 
 ### Layer 1 — 受動（気配と痕跡）
@@ -31,7 +31,7 @@
 | 漂う言葉 | 2.4〜6.9s 間隔で浮上→消失 |
 | orb | rAF で点滅 |
 | 人数 | 演出値（セッション固定） |
-| ランダムイベント | 流れ星 / 一緒に呼吸（本番: 45s 初回、以降 90〜300s） |
+| ランダムイベント | 流れ星 / 風 / 波（本番: 45s 初回、以降 90〜300s） |
 | 沈黙 | 何も起きなくて正しい |
 
 言葉: 最大 24 文字、返信なし、同一セッションの drift プールに混ざるのみ。
@@ -54,7 +54,6 @@ verbose ヒントは help 開時のみ。
 | 中心 | click/tap | 深い一呼吸 (`--touch-boost`) | 600ms 遅延、10s に 1 回 |
 | 空白 | click | 極薄 ripple | debounce 2s |
 | orb | hover (fine) | opacity +0.15 | 200ms 遅延 |
-| companion | 中心タッチ中 | halo わずかに強まる | セリフなし |
 
 ---
 

@@ -1,5 +1,6 @@
-import { CompanionBreathEvent } from "./CompanionBreathEvent";
+import { BreathWaveEvent } from "./BreathWaveEvent";
 import { ShootingStarEvent } from "./ShootingStarEvent";
+import { WindDriftEvent } from "./WindDriftEvent";
 import type { EventDefinition, EventType } from "@/lib/events/types";
 
 /** ここにイベントを追加していく */
@@ -12,11 +13,18 @@ export const EVENT_REGISTRY: EventDefinition[] = [
     Component: ShootingStarEvent,
   },
   {
-    type: "companion-breath",
-    label: "一緒に呼吸",
-    weight: 0.65,
-    durationMs: 26_000,
-    Component: CompanionBreathEvent,
+    type: "wind-drift",
+    label: "風",
+    weight: 0.85,
+    durationMs: 4_200,
+    Component: WindDriftEvent,
+  },
+  {
+    type: "breath-wave",
+    label: "波",
+    weight: 0.7,
+    durationMs: 5_500,
+    Component: BreathWaveEvent,
   },
 ];
 

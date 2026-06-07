@@ -8,7 +8,6 @@ import { DriftField } from "@/components/DriftField";
 import { HelpOverlay } from "@/components/HelpOverlay";
 import { Orbs } from "@/components/Orbs";
 import { RippleField } from "@/components/RippleField";
-import { SedimentField } from "@/components/SedimentField";
 import { SiteChrome } from "@/components/SiteChrome";
 import { WordBar } from "@/components/WordBar";
 import { useBreathEngine } from "@/hooks/useBreathEngine";
@@ -17,7 +16,7 @@ import { useInteractionState } from "@/hooks/useInteractionState";
 import { useAnimationFrame } from "@/hooks/useAnimationFrame";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useRandomEvents } from "@/hooks/useRandomEvents";
-import { CONFIG, SEED_WORDS } from "@/lib/constants";
+import { CONFIG } from "@/lib/constants";
 import { seededRandom } from "@/lib/random";
 
 function isTypingInInput(): boolean {
@@ -25,16 +24,15 @@ function isTypingInInput(): boolean {
 }
 
 const INTERACTIVE_SELECTOR =
-  ".help-toggle, .help-overlay, .word-bar, .word-input, input, .event-debug, .orb, .companion-breath-event";
+  ".help-toggle, .help-overlay, .word-bar, .word-input, input, .event-debug, .orb";
 
 /** 「深呼吸している場所」のメイン画面 */
 export function Space() {
-  const [words, setWords] = useState<string[]>([...SEED_WORDS]);
+  const [words, setWords] = useState<Array<{ id: string; text: string }>>([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [wordBarOpen, setWordBarOpen] = useState(false);
   const [wordBarSession, setWordBarSession] = useState(0);
   const [wordBarInitialChar, setWordBarInitialChar] = useState("");
-  const [incomingWord, setIncomingWord] = useState<string | null>(null);
   const [pointer, setPointer] = useState<{
     x: number;
     y: number;
@@ -74,7 +72,6 @@ export function Space() {
     sessionSeed,
     touchBoost,
     ripples,
-    companionNear,
     triggerRipple,
     triggerBreathClick,
   } = useInteractionState();
@@ -146,15 +143,8 @@ export function Space() {
   });
 
   const handlePlaceWord = useCallback((word: string) => {
-    setIncomingWord(word);
-  }, []);
-
-  const handleSedimentSettled = useCallback((word: string) => {
-    setWords((current) => [word, ...current].slice(0, CONFIG.maxStoredWords));
-  }, []);
-
-  const handleIncomingHandled = useCallback(() => {
-    setIncomingWord(null);
+    const item = { id: crypto.randomUUID(), text: word };
+    setWords((current) => [item, ...current].slice(0, CONFIG.maxStoredWords));
   }, []);
 
   const handleSpacePointerDown = useCallback(
@@ -198,6 +188,13 @@ export function Space() {
     const amtLerp = 0.07;
     smooth.amount += (desiredAmount - smooth.amount) * amtLerp;
 
+    setPointer({
+      x: smooth.x,
+      y: smooth.y,
+      active: smooth.active,
+      pressed: smooth.pressed,
+    });
+
     if (smooth.amount < 0.02) {
       disp.setAttribute("scale", "0");
       return;
@@ -212,14 +209,6 @@ export function Space() {
 
     const maskSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1' preserveAspectRatio='none'><defs><radialGradient id='g' cx='${ux}' cy='${uy}' r='0.52'><stop offset='0' stop-color='white' stop-opacity='1'/><stop offset='0.55' stop-color='white' stop-opacity='0.65'/><stop offset='1' stop-color='black' stop-opacity='0'/></radialGradient></defs><rect width='1' height='1' fill='url(#g)'/></svg>`;
     img.setAttribute("href", `data:image/svg+xml;utf8,${encodeURIComponent(maskSvg)}`);
-
-    // pointerglow 用の見た目も同じ滑らかさに合わせる
-    setPointer({
-      x: smooth.x,
-      y: smooth.y,
-      active: smooth.active,
-      pressed: smooth.pressed,
-    });
   }, true);
 
   return (
@@ -227,11 +216,6 @@ export function Space() {
       className="space"
       data-verbose={helpOpen || undefined}
       data-debug={debug || undefined}
-      data-companion-near={
-        companionNear && activeEvent?.type === "companion-breath"
-          ? true
-          : undefined
-      }
       onPointerDown={handleSpacePointerDown}
       onPointerMove={(event) => {
         // pointerglow 表示は rAF 側で滑らかに更新する
@@ -327,11 +311,6 @@ export function Space() {
       <SiteChrome presenceCount={presenceCount} />
       <Orbs count={CONFIG.orbCount} sessionSeed={sessionSeed} />
       <RippleField ripples={ripples} pointer={pointer} />
-      <SedimentField
-        incoming={incomingWord}
-        onSettled={handleSedimentSettled}
-        onIncomingHandled={handleIncomingHandled}
-      />
       <DriftField words={words} />
       <EventLayer activeEvent={activeEvent} onComplete={completeEvent} />
 

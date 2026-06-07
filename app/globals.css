@@ -143,8 +143,15 @@ body::after {
   margin-left: calc(-5px - var(--bo) * 3px);
   margin-top: calc(-5px - var(--bo) * 3px);
   border-radius: 50%;
-  background: var(--ember);
-  box-shadow: 0 0 calc(18px + var(--bo) * 30px) var(--ember);
+  /* 色は固定（明るいまま）、opacity だけを 1/f で揺らす */
+  background: color-mix(in oklab, var(--ember) 92%, white 8%);
+  /* pow() は未対応ブラウザがあるので cf*cf で近似 */
+  box-shadow: 0 0
+    calc((18px + var(--bo) * 30px) * (var(--cf, 1) * var(--cf, 1)))
+    color-mix(in oklab, var(--ember) 92%, white 8%);
+  opacity: 1;
+  /* 透明度の振れ幅を 0.0〜1.0 にする */
+  opacity: clamp(0, var(--cf01, 1), 1);
   will-change: width, height, margin, box-shadow;
 }
 
@@ -263,29 +270,30 @@ body::after {
 
 .sedimentword {
   position: absolute;
-  left: 50%;
-  bottom: 22%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   font-family: var(--serif);
   font-size: 13px;
   line-height: 1.6;
   color: var(--ink-faint);
-  animation: sedimentSink var(--sediment-ms, 3s) ease-in forwards;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  opacity: 0.78;
+  animation: sedimentSink var(--sediment-ms, 3s) ease-out forwards;
 }
 
 @keyframes sedimentSink {
   0% {
     opacity: 0;
-    transform: translateX(-50%) translateY(12px);
+    transform: translate(-50%, -50%) translateY(10px);
   }
 
-  15% {
-    opacity: 0.7;
+  18% {
+    opacity: 0.78;
   }
 
   100% {
-    opacity: 0.35;
-    transform: translateX(-50%) translateY(48px);
+    opacity: 0.78;
+    transform: translate(-50%, -50%) translateY(22px);
   }
 }
 
@@ -297,32 +305,64 @@ body::after {
   overflow: hidden;
 }
 
-.driftword {
+.drift-anchor {
   position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.drift-motion {
+  will-change: transform, opacity;
+}
+
+.drift-motion.entering {
+  opacity: 0;
+  animation: driftEnter 2.2s ease-out forwards;
+}
+
+@keyframes driftEnter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0);
+  }
+
+  35% {
+    opacity: 0.78;
+  }
+
+  100% {
+    opacity: 0.78;
+    transform: translate3d(0, var(--fall-y, 24px), 0);
+  }
+}
+
+.drift-motion.drifting {
+  opacity: 0.78;
+}
+
+.driftword {
+  display: block;
   font-family: var(--serif);
   font-size: 13px;
   line-height: 1.6;
   color: var(--ink-faint);
   letter-spacing: 0.08em;
   white-space: nowrap;
-  opacity: 0;
-  animation: driftIn 6s ease forwards;
-  will-change: transform, opacity;
 }
 
-@keyframes driftIn {
-  0% {
-    opacity: 0;
-  }
-  20% {
+.drift-motion.leaving {
+  animation: driftLeave 1100ms ease forwards;
+}
+
+@keyframes driftLeave {
+  from {
     opacity: 0.78;
+    filter: blur(0px);
   }
-  80% {
-    opacity: 0.68;
-  }
-  100% {
+
+  to {
     opacity: 0;
-    transform: translate(var(--dx, 0), var(--dy, -40px));
+    filter: blur(2px);
   }
 }
 
@@ -594,30 +634,6 @@ body::after {
   opacity: 0.6;
 }
 
-.type-hint {
-  position: fixed;
-  left: 50%;
-  bottom: 28px;
-  transform: translateX(-50%);
-  z-index: 30;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.32em;
-  color: var(--ink-faint);
-  opacity: 0;
-  transition: opacity 1.6s ease;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.space[data-verbose] .type-hint {
-  opacity: 0.55;
-}
-
-.word-bar.open ~ .type-hint {
-  opacity: 0 !important;
-}
-
 ::selection {
   background: var(--ember-soft);
   color: var(--bg-deep);
@@ -701,7 +717,7 @@ body::after {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 3;
+  z-index: 5;
   overflow: hidden;
 }
 
@@ -763,84 +779,220 @@ body::after {
   }
 }
 
-/* 一緒に呼吸する気配 */
-.companion-breath-event {
-  position: fixed;
-  top: 50%;
-  z-index: 3;
-  pointer-events: none;
-  transform: translateY(calc(-50% + var(--companion-y)));
-  animation: companionFade 26s ease forwards;
+/* 横風 — wash がごく弱く流れ、葉が舞う */
+.wind-drift-event {
+  --wind-dir: 1;
+  --wind-strength: 0.7;
 }
 
-.companion-breath-event--left {
-  left: max(16px, min(14%, 96px));
-}
-
-.companion-breath-event--right {
-  right: max(16px, min(14%, 96px));
-}
-
-.companion-figure {
-  position: relative;
-  transform: scale(calc(0.95 + var(--bo) * 0.14));
-  transition: transform 80ms linear;
-}
-
-.companion-halo {
+.wind-drift-layer {
   position: absolute;
-  inset: -28px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    oklch(0.72 0.04 50 / 0.28) 0%,
-    oklch(0.65 0.03 50 / 0.1) 45%,
-    transparent 72%
+  inset: -8%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(0.82 0.04 70 / 0.12) 28%,
+    oklch(0.88 0.05 75 / 0.22) 50%,
+    oklch(0.82 0.04 70 / 0.12) 72%,
+    transparent 100%
   );
-  filter: blur(12px);
-  opacity: calc(0.45 + var(--bo) * 0.45);
-  transition: opacity 0.8s ease, filter 0.8s ease;
+  opacity: 0;
+  filter: blur(1px);
+  animation: windDrift 4.2s ease-in-out forwards;
 }
 
-.space[data-companion-near] .companion-halo {
-  opacity: calc(0.45 + var(--bo) * 0.45 + 0.12);
-  filter: blur(14px);
+@keyframes windDrift {
+  0% {
+    opacity: 0;
+    transform: translateX(calc(var(--wind-dir, 1) * -18vw));
+  }
+
+  15% {
+    opacity: calc(0.75 * var(--wind-strength, 0.7));
+  }
+
+  80% {
+    opacity: calc(0.5 * var(--wind-strength, 0.7));
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(calc(var(--wind-dir, 1) * 18vw));
+  }
 }
 
-.companion-body {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+.wind-leaves {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
-.companion-head {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--ember-soft);
-  box-shadow: 0 0 10px oklch(0.72 0.04 50 / 0.5);
+.wind-leaf {
+  position: absolute;
+  display: block;
+  pointer-events: none;
 }
 
-.companion-torso {
-  width: 16px;
-  height: 22px;
-  border-radius: 45% 45% 50% 50%;
-  background: var(--ink-mute);
-  box-shadow: 0 0 14px oklch(0.62 0.02 70 / 0.25);
+.wind-leaf-motion,
+.wind-leaf-fall,
+.wind-leaf-sway {
+  display: block;
 }
 
-@keyframes companionFade {
+.wind-leaf-motion {
+  opacity: 0;
+  animation:
+    windLeafDriftX var(--leaf-duration, 3.2s) linear forwards,
+    windLeafFade var(--leaf-duration, 3.2s) ease-in-out forwards;
+  animation-delay: var(--leaf-delay, 0s);
+}
+
+.wind-leaf-fall {
+  animation: windLeafFallY var(--leaf-duration, 3.2s) cubic-bezier(0.22, 0.55, 0.28, 1)
+    forwards;
+  animation-delay: var(--leaf-delay, 0s);
+}
+
+.wind-leaf-sway {
+  animation: windLeafSway var(--leaf-sway-duration, 1.4s) ease-in-out infinite;
+  animation-delay: var(--leaf-delay, 0s);
+}
+
+.wind-leaf-shape {
+  display: block;
+  width: calc(9px * var(--leaf-scale, 1));
+  height: calc(13px * var(--leaf-scale, 1));
+  margin: calc(-6.5px * var(--leaf-scale, 1)) 0 0 calc(-4.5px * var(--leaf-scale, 1));
+  border-radius: 2px 80% 2px 80%;
+  background: linear-gradient(
+    145deg,
+    oklch(0.84 0.1 135 / 0.72) 0%,
+    oklch(0.72 0.08 130 / 0.58) 100%
+  );
+  box-shadow: 0 0 5px oklch(0.78 0.08 135 / 0.22);
+  transform: rotate(var(--leaf-spin, 0deg));
+  animation: windLeafTumble var(--leaf-duration, 3.2s) ease-in-out forwards;
+  animation-delay: var(--leaf-delay, 0s);
+}
+
+@keyframes windLeafDriftX {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(
+      calc(var(--wind-dir, 1) * var(--leaf-wind-x, 1) * 44vw),
+      0,
+      0
+    );
+  }
+}
+
+@keyframes windLeafFallY {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  18% {
+    transform: translate3d(0, calc(var(--leaf-flutter, 10px) * -0.9), 0);
+  }
+
+  100% {
+    transform: translate3d(0, var(--leaf-gravity, 12vh), 0);
+  }
+}
+
+@keyframes windLeafSway {
   0%,
+  100% {
+    transform: translate3d(
+      calc(var(--leaf-wobble, 8px) * var(--wind-dir, 1) * -0.35),
+      calc(var(--leaf-flutter, 10px) * 0.08),
+      0
+    );
+  }
+
+  50% {
+    transform: translate3d(
+      calc(var(--leaf-wobble, 8px) * var(--wind-dir, 1) * 0.35),
+      calc(var(--leaf-flutter, 10px) * -0.22),
+      0
+    );
+  }
+}
+
+@keyframes windLeafTumble {
+  from {
+    transform: rotate(var(--leaf-spin, 0deg));
+  }
+
+  to {
+    transform: rotate(
+      calc(var(--leaf-spin, 0deg) + 300deg * var(--leaf-tumble-rate, 1))
+    );
+  }
+}
+
+@keyframes windLeafFade {
+  0% {
+    opacity: 0;
+  }
+
+  10% {
+    opacity: calc(0.58 * var(--wind-strength, 0.7) * var(--leaf-opacity, 1));
+  }
+
+  78% {
+    opacity: calc(0.38 * var(--wind-strength, 0.7) * var(--leaf-opacity, 1));
+  }
+
   100% {
     opacity: 0;
   }
-  6% {
-    opacity: 1;
+}
+
+/* 息の波 — canvas で水面を描画 */
+.breath-wave-viewport {
+  position: absolute;
+  inset: -4%;
+  transform-origin: 50% 45%;
+  animation: breathWaterRock 5.5s ease-in-out forwards;
+}
+
+.breath-wave-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  mix-blend-mode: screen;
+  opacity: 0.75;
+}
+
+@keyframes breathWaterRock {
+  0%,
+  100% {
+    transform: perspective(1100px) rotateX(0deg) rotateY(0deg) translate3d(0, 0, 0);
   }
-  88% {
-    opacity: 1;
+
+  18% {
+    transform: perspective(1100px)
+      rotateX(calc(0.34deg * var(--wave-sway, 1)))
+      rotateY(calc(var(--wave-drift, 1) * -0.26deg * var(--wave-sway, 1)))
+      translate3d(calc(var(--wave-drift, 1) * -0.35vw), -0.45vh, 0);
+  }
+
+  42% {
+    transform: perspective(1100px)
+      rotateX(calc(-0.22deg * var(--wave-sway, 1)))
+      rotateY(calc(var(--wave-drift, 1) * 0.2deg * var(--wave-sway, 1)))
+      translate3d(calc(var(--wave-drift, 1) * 0.28vw), 0.62vh, 0);
+  }
+
+  68% {
+    transform: perspective(1100px)
+      rotateX(calc(0.16deg * var(--wave-sway, 1)))
+      rotateY(calc(var(--wave-drift, 1) * -0.14deg * var(--wave-sway, 1)))
+      translate3d(calc(var(--wave-drift, 1) * -0.18vw), -0.28vh, 0);
   }
 }
 
@@ -856,13 +1008,5 @@ body::after {
 
   .help-title {
     font-size: 18px;
-  }
-
-  .companion-breath-event--left {
-    left: 12px;
-  }
-
-  .companion-breath-event--right {
-    right: 12px;
   }
 }

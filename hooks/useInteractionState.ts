@@ -26,13 +26,11 @@ export function useInteractionState(options: Options = {}) {
 
   const [touchBoost, setTouchBoost] = useState(0);
   const [ripples, setRipples] = useState<Ripple[]>([]);
-  const [companionNear, setCompanionNear] = useState(false);
 
   const lastRippleAt = useRef(0);
   const lastBreathClickAt = useRef(0);
   const rippleId = useRef(0);
   const boostTimerRef = useRef<number | null>(null);
-  const companionNearTimerRef = useRef<number | null>(null);
 
   const clearBoostTimer = useCallback(() => {
     if (boostTimerRef.current !== null) {
@@ -77,15 +75,6 @@ export function useInteractionState(options: Options = {}) {
       }, INTERACTION.touchBoostDurationMs);
     }, INTERACTION.breathClickDelayMs);
 
-    setCompanionNear(true);
-    if (companionNearTimerRef.current !== null) {
-      window.clearTimeout(companionNearTimerRef.current);
-    }
-    companionNearTimerRef.current = window.setTimeout(() => {
-      setCompanionNear(false);
-      companionNearTimerRef.current = null;
-    }, INTERACTION.touchBoostDurationMs);
-
     return true;
   }, [clearBoostTimer]);
 
@@ -93,7 +82,6 @@ export function useInteractionState(options: Options = {}) {
     sessionSeed,
     touchBoost,
     ripples,
-    companionNear,
     triggerRipple,
     triggerBreathClick,
   };
