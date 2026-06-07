@@ -1,7 +1,5 @@
 # インタラクション設計
 
-[concept.md](./concept.md) に基づく、このアプリのインタラクション正本。
-
 ## 原則
 
 | 原則 | ルール |
@@ -28,13 +26,13 @@
 
 | 要素 | 振る舞い |
 |---|---|
-| 漂う言葉 | 2.4〜6.9s 間隔で浮上→消失 |
-| orb | rAF で点滅 |
-| 人数 | 演出値（セッション固定） |
+| 漂う言葉 | ユーザーが置いた分だけ落下→漂流（最大 40） |
+| orb | rAF で点滅。オンライン時は presence に連動（1〜7、最後が you） |
+| 人数 | オンライン時は API 実数（polling）。無効時は演出 fallback（3〜5） |
 | ランダムイベント | 流れ星 / 風 / 波（本番: 45s 初回、以降 90〜300s） |
 | 沈黙 | 何も起きなくて正しい |
 
-言葉: 最大 24 文字、返信なし、同一セッションの drift プールに混ざるのみ。
+言葉: 最大 24 文字、返信なし、**自分の画面にだけ**漂う。サーバーへは観察用に裏送信（`NEXT_PUBLIC_ONLINE=1`）。
 
 ### Layer 2 — 自発
 
@@ -57,7 +55,7 @@ verbose ヒントは help 開時のみ。
 
 ---
 
-## パラメータ（コード）
+## パラメータ
 
 | 定数 | 場所 | 値 |
 |---|---|---|
@@ -70,16 +68,16 @@ verbose ヒントは help 開時のみ。
 
 ---
 
-## 状態（ローカルのみ）
+## 状態
 
-`useInteractionState` が管理:
+`useInteractionState` が管理する（すべてローカル）。
 
 - `touchBoost` — 中心クリック後の一時的な呼吸 boost
 - `ripples` — 空白クリックの ripple 一覧
 - `sessionSeed` — セッション固定の乱数 seed
 - debounce 用タイムスタンプ
 
-`sessionStorage` は使わない（リロードで痕跡は消える）。
+`sessionStorage` は使わない。リロードで痕跡は消える。
 
 ---
 
@@ -92,6 +90,6 @@ verbose ヒントは help 開時のみ。
 | オーケストレーション | `components/Space.tsx` |
 | 中心 | `components/BreathForm.tsx` |
 | ripple | `components/RippleField.tsx` |
-| 沈殿 | `components/SedimentField.tsx` |
 | 漂流 | `components/DriftField.tsx` |
+| オンライン | `hooks/useOnlineSpace.ts`, `lib/api.ts`, `worker/` |
 | orb | `components/Orbs.tsx` |

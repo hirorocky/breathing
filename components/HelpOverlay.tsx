@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -35,14 +37,25 @@ export function HelpOverlay({ open, onClose }: Props) {
             <li>沈黙が許される</li>
           </ul>
           <p>
-            時おり、ほかの人の置いていった短い言葉が、滲んでは消える。
+            置いた言葉は、あなたの画面にだけ見える。
             <br />
-            画面の隅にある小さな点は、いま居合わせている誰か。
+            画面の隅の小さな点は、いま居合わせている誰かの気配。
             <br />
-            互いに、見ない。
+            互いの言葉は、見合わない。
+          </p>
+          <p className="help-disclosure">
+            この場は、存在の負荷を少し下げられるかを試す小さな試みです。
+            置いた言葉は他の利用者には見えません。場をつくっている人が、あとから読むことがあります。
+            名前やプロフィールはありません。利用のおおよその様子だけを、個人を特定しない形で見ています。
+            {" "}
+            <Link href="/privacy" className="help-disclosure-link">
+              くわしく
+            </Link>
           </p>
           <p className="help-foot">
-            キーボードを叩くと、ひとこと置いていける。
+            正しくまとめなくていい。
+            <br />
+            区切りがついたら、キーボードを叩いてひとこと置いていってもいい。
             <br />
             esc または ? で閉じる。
           </p>

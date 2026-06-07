@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { EventDebugPanel } from "@/components/events/EventDebugPanel";
 import { EventLayer } from "@/components/events/EventLayer";
 import { BreathForm } from "@/components/BreathForm";
@@ -15,9 +15,9 @@ import { useDebugMode } from "@/hooks/useDebugMode";
 import { useInteractionState } from "@/hooks/useInteractionState";
 import { useAnimationFrame } from "@/hooks/useAnimationFrame";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useOnlineSpace } from "@/hooks/useOnlineSpace";
 import { useRandomEvents } from "@/hooks/useRandomEvents";
 import { CONFIG } from "@/lib/constants";
-import { seededRandom } from "@/lib/random";
 
 function isTypingInInput(): boolean {
   return document.activeElement?.tagName === "INPUT";
@@ -76,10 +76,10 @@ export function Space() {
     triggerBreathClick,
   } = useInteractionState();
 
-  const presenceCount = useMemo(
-    () => 3 + Math.floor(seededRandom(sessionSeed) * 3),
-    [sessionSeed],
-  );
+  const { presenceCount, orbCount, sendWord } = useOnlineSpace({
+    sessionSeed,
+    enabled: !helpOpen,
+  });
 
   useBreathEngine({
     cycleSeconds: CONFIG.breathCycleSeconds,
@@ -142,10 +142,14 @@ export function Space() {
     },
   });
 
-  const handlePlaceWord = useCallback((word: string) => {
-    const item = { id: crypto.randomUUID(), text: word };
-    setWords((current) => [item, ...current].slice(0, CONFIG.maxStoredWords));
-  }, []);
+  const handlePlaceWord = useCallback(
+    (word: string) => {
+      const item = { id: crypto.randomUUID(), text: word };
+      setWords((current) => [item, ...current].slice(0, CONFIG.maxStoredWords));
+      void sendWord(word);
+    },
+    [sendWord],
+  );
 
   const handleSpacePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -309,7 +313,7 @@ export function Space() {
         </filter>
       </svg>
       <SiteChrome presenceCount={presenceCount} />
-      <Orbs count={CONFIG.orbCount} sessionSeed={sessionSeed} />
+      <Orbs count={orbCount} sessionSeed={sessionSeed} />
       <RippleField ripples={ripples} pointer={pointer} />
       <DriftField words={words} />
       <EventLayer activeEvent={activeEvent} onComplete={completeEvent} />
@@ -329,6 +333,10 @@ export function Space() {
         onClose={closeWordBar}
         onPlace={handlePlaceWord}
       />
+
+      <a href="/privacy" className="space-about-link">
+        この場について
+      </a>
 
       <button
         type="button"

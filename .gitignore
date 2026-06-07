@@ -1,4 +1,6 @@
 node_modules
+worker/node_modules
+worker/.wrangler
 .next
 out
 tsconfig.tsbuildinfo

@@ -572,12 +572,134 @@ body::after {
   background: var(--ember-soft);
 }
 
+.help-disclosure {
+  font-size: 11px !important;
+  line-height: 2 !important;
+  letter-spacing: 0.06em !important;
+  color: var(--ink-faint) !important;
+  margin-top: 4px !important;
+}
+
+.help-disclosure-link {
+  color: var(--ink-faint);
+  text-decoration: underline;
+  text-decoration-color: oklch(from var(--ink-faint) l c h / 0.35);
+  text-underline-offset: 3px;
+  transition: color 0.6s ease;
+}
+
+.help-disclosure-link:hover {
+  color: var(--ink-mute);
+}
+
 .help-foot {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.22em;
   color: var(--ink-faint);
   margin-top: 8px;
+}
+
+.space-about-link {
+  position: fixed;
+  bottom: 36px;
+  left: 72px;
+  z-index: 99;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: oklch(from var(--ink-faint) l c h / 0.55);
+  text-decoration: none;
+  transition: color 0.6s ease;
+}
+
+.space-about-link:hover {
+  color: var(--ink-mute);
+}
+
+.privacy-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 48px 24px;
+  background: var(--bg-deep);
+  color: var(--ink);
+}
+
+.privacy-card {
+  max-width: 520px;
+  width: 100%;
+}
+
+.privacy-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.32em;
+  color: var(--ember-soft);
+  margin: 0 0 22px;
+}
+
+.privacy-title {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  line-height: 1.8;
+  margin: 0 0 40px;
+}
+
+.privacy-card section {
+  margin-bottom: 32px;
+}
+
+.privacy-card h2 {
+  font-size: 12px;
+  font-family: var(--mono);
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  color: var(--ink-mute);
+  margin: 0 0 12px;
+}
+
+.privacy-card p {
+  font-size: 14px;
+  line-height: 2.2;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  margin: 0 0 14px;
+}
+
+.privacy-contact {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+}
+
+a.privacy-contact {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.6s ease;
+}
+
+a.privacy-contact:hover {
+  color: var(--ink-mute);
+}
+
+.privacy-back {
+  margin-top: 48px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+}
+
+.privacy-back a {
+  color: var(--ink-faint);
+  text-decoration: none;
+  transition: color 0.6s ease;
+}
+
+.privacy-back a:hover {
+  color: var(--ink-mute);
 }
 
 .word-bar {

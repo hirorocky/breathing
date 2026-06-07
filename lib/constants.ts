@@ -29,3 +29,37 @@ export const CONFIG = {
   /** 漂う言葉を保持する上限 */
   maxStoredWords: 40,
 } as const;
+
+/** サーバー側 D1 に保持する言葉の上限（worker WORDS_MAX_STORED と一致） */
+export const SERVER_WORDS_MAX_STORED = 10_000;
+
+/** 失敗した言葉 POST の再送キュー上限 */
+export const PENDING_WORDS_MAX = 8;
+
+/** `/privacy` お問い合わせ（未設定時はプレースホルダ表示） */
+export const PRIVACY_CONTACT =
+  process.env.NEXT_PUBLIC_PRIVACY_CONTACT?.trim() || "";
+
+/** オンライン API（NEXT_PUBLIC_ONLINE=1 のときのみ有効） */
+export const ONLINE = {
+  enabled: process.env.NEXT_PUBLIC_ONLINE === "1",
+  /** orb を presence に連動（0 で固定数） */
+  orbLinkEnabled:
+    process.env.NEXT_PUBLIC_ONLINE === "1" &&
+    process.env.NEXT_PUBLIC_ORB_LINK !== "0",
+  /** 本番同一オリジン・ローカル dev（rewrite）では空でよい */
+  apiBase: process.env.NEXT_PUBLIC_API_BASE ?? "",
+  /** GET /api/presence の polling 間隔（ms） */
+  presencePollMs: Number(process.env.NEXT_PUBLIC_PRESENCE_POLL_MS) || 60_000,
+  /** orb 数が 1 ステップ変わるまでの ms */
+  orbStepMs: Number(process.env.NEXT_PUBLIC_ORB_STEP_MS) || 1_200,
+} as const;
+
+export type ApiMode = "online" | "static_only" | "offline";
+
+export type PresenceResponse = {
+  online: boolean;
+  mode: ApiMode;
+  count?: number;
+  reason?: string;
+};

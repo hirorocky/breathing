@@ -22,7 +22,7 @@ function seededFromSession(sessionSeed: number, index: number): number {
   return seededRandom(sessionSeed * 1000 + index);
 }
 
-/** 画面周辺に漂う「他者の気配」を表す点 */
+/** 画面周辺に漂う気配の点。最後の 1 つが you。Phase 3 で count は presence 連動（上限 7） */
 export function Orbs({ count, sessionSeed }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);

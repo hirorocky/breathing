@@ -1,0 +1,31 @@
+name = "breathing-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "breathing"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[vars]
+BUDGET_ENABLED = "true"
+# Workers Free の日次 10 万 req より少し手前で止める
+BUDGET_DAILY_REQUESTS = "90000"
+# Workers Paid の月次 1,000 万 req より手前
+BUDGET_MONTHLY_REQUESTS = "9000000"
+STATIC_ONLY_MODE = "false"
+PRESENCE_WINDOW_SEC = "300"
+WORDS_MAX_STORED = "10000"
+WORD_RATE_LIMIT_SEC = "30"
+# 本番では Pages の URL を指定（例: https://breathing.example.pages.dev）
+# ALLOWED_ORIGINS = ""
+IP_THROTTLE_WINDOW_SEC = "60"
+IP_THROTTLE_MAX = "120"
+MAX_BODY_BYTES = "1024"
+
+# ADMIN_TOKEN は wrangler secret put ADMIN_TOKEN で設定
+
+[dev]
+port = 8787
+local_protocol = "http"

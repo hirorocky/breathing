@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "dev:worker": "npm run dev --prefix worker",
+    "dev:all": "concurrently -k -n web,api -c cyan,magenta \"npm run dev\" \"npm run dev:worker\"",
+    "deploy:worker": "npm run deploy --prefix worker",
+    "db:migrate:local": "npm run db:migrate:local --prefix worker",
+    "typecheck:worker": "npm run typecheck --prefix worker"
   },
   "dependencies": {
     "next": "^15.5.0",
@@ -18,6 +23,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9",
     "eslint": "^9",
     "eslint-config-next": "^15.5.0",
     "typescript": "^5"
