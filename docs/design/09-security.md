@@ -20,7 +20,7 @@
 | 言葉 POST 制限 | `WORD_RATE_LIMIT_SEC` |
 | 入力検証 | 1〜24 文字、URL 禁止、body 1KB |
 | セッション Cookie | HttpOnly / SameSite=Lax / Secure(HTTPS) |
-| Admin 認証 | Bearer + 定数時間比較 |
+| Admin 認証 | `hono/bearer-auth` |
 | Origin 検証 | `ALLOWED_ORIGINS` 設定時 |
 | SQL | プリペアドステートメント |
 
@@ -55,4 +55,4 @@ Content-Security-Policy: default-src 'self'; connect-src 'self'; img-src 'self' 
 
 ## 関連コード
 
-`worker/src/security.ts`, `worker/src/budget.ts`, `worker/src/index.ts`
+`worker/src/security.ts`, `worker/src/budget.ts`, `worker/src/middleware/`, `worker/src/routes/`, `worker/src/index.ts`

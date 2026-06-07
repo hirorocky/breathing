@@ -18,10 +18,12 @@
 
 | ファイル | 役割 |
 |---|---|
-| `worker/src/index.ts` | API ルート |
-| `worker/src/budget.ts` | 予算ガード |
-| `worker/src/security.ts` | Origin / IP スロットル / 認証 |
-| `worker/src/responses.ts` | JSON / 503 応答 |
+| `worker/src/index.ts` | Hono アプリ（cors / logger / onError） |
+| `worker/src/routes/public.ts` | presence / words |
+| `worker/src/routes/admin.ts` | admin stats / words（bearer-auth） |
+| `worker/src/middleware/` | origin / IP スロットル / 予算ガード |
+| `worker/src/budget.ts` | 予算カウント（D1） |
+| `worker/src/security.ts` | Origin 検証 / IP ハッシュ / スロットル |
 | `worker/wrangler.toml` | D1 バインディング・環境変数 |
 | `worker/migrations/` | D1 スキーマ |
 

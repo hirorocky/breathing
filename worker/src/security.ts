@@ -35,47 +35,6 @@ export function normalizeSessionId(raw: string | undefined): string | null {
   return isValidSessionId(trimmed) ? trimmed : null;
 }
 
-/** タイミング攻撃を緩和する定数時間比較 */
-export function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-export function authorizeAdmin(request: Request, env: SecurityEnv): boolean {
-  const token = env.ADMIN_TOKEN;
-  if (!token) return false;
-  const auth = request.headers.get("Authorization") ?? "";
-  const prefix = "Bearer ";
-  if (!auth.startsWith(prefix)) return false;
-  return constantTimeEqual(auth.slice(prefix.length), token);
-}
-
-export function corsHeadersForRequest(
-  request: Request,
-  env: SecurityEnv,
-): Record<string, string> {
-  const allowed = parseAllowedOrigins(env.ALLOWED_ORIGINS);
-  const origin = request.headers.get("Origin");
-
-  if (allowed.length === 0) {
-    return {};
-  }
-
-  if (origin && allowed.includes(origin)) {
-    return {
-      "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Credentials": "true",
-      "Vary": "Origin",
-    };
-  }
-
-  return {};
-}
-
 export function isOriginAllowed(
   request: Request,
   env: SecurityEnv,
@@ -153,34 +112,4 @@ export async function checkIpThrottle(
     .run();
 
   return { allowed: true };
-}
-
-export function maxBodyBytes(env: SecurityEnv): number {
-  return parsePositiveInt(env.MAX_BODY_BYTES, 1024);
-}
-
-export async function readJsonBody<T>(
-  request: Request,
-  env: SecurityEnv,
-): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string }> {
-  const contentLength = request.headers.get("Content-Length");
-  const maxBytes = maxBodyBytes(env);
-
-  if (contentLength) {
-    const len = Number(contentLength);
-    if (Number.isFinite(len) && len > maxBytes) {
-      return { ok: false, status: 413, error: "payload_too_large" };
-    }
-  }
-
-  const raw = await request.text();
-  if (raw.length > maxBytes) {
-    return { ok: false, status: 413, error: "payload_too_large" };
-  }
-
-  try {
-    return { ok: true, data: JSON.parse(raw) as T };
-  } catch {
-    return { ok: false, status: 400, error: "invalid_json" };
-  }
 }
