@@ -6,6 +6,7 @@ import { ipThrottleGuard } from "../middleware/ipThrottle";
 import { originGuard } from "../middleware/origin";
 import { attachSession, resolveSession } from "../middleware/session";
 import { parsePositiveInt } from "../security";
+import { nowUnixSeconds } from "../time";
 import type { AppEnv } from "../types";
 
 const wordSchema = z.object({
@@ -18,7 +19,7 @@ const publicGuards = [originGuard, ipThrottleGuard, budgetGuard] as const;
 
 publicRoutes.get("/presence", ...publicGuards, async (c) => {
   const sessionId = resolveSession(c);
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowUnixSeconds();
   const windowSec = parsePositiveInt(c.env.PRESENCE_WINDOW_SEC, 300);
 
   await c.env.DB.prepare(
@@ -63,7 +64,7 @@ publicRoutes.post(
 
     const sessionId = resolveSession(c);
     const ipHash = c.get("ipHash");
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowUnixSeconds();
     const rateSec = parsePositiveInt(c.env.WORD_RATE_LIMIT_SEC, 30);
 
     const rateRow = await c.env.DB.prepare(

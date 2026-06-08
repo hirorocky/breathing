@@ -10,6 +10,7 @@
 | `hooks/useOrbCount.ts` | orb 数の緩やかな追従 |
 | `lib/api.ts` | `fetchPresence` / `submitWord` |
 | `lib/constants.ts` | `ONLINE` 設定 |
+| `lib/time.ts` | `Temporal.Now` ベースの時刻ヘルパー |
 | `lib/orbPresence.ts` | presence → orb 目標値 |
 | `next.config.ts` | static export、dev rewrite |
 | `public/_routes.json` | `/api/*` を Worker へ |
@@ -22,6 +23,7 @@
 | `worker/src/routes/public.ts` | presence / words |
 | `worker/src/routes/admin.ts` | admin stats / words（bearer-auth） |
 | `worker/src/middleware/` | origin / IP スロットル / 予算ガード |
+| `worker/src/time.ts` | Temporal 時刻ヘルパー（polyfill 経由） |
 | `worker/src/budget.ts` | 予算カウント（D1） |
 | `worker/src/security.ts` | Origin 検証 / IP ハッシュ / スロットル |
 | `worker/wrangler.toml` | D1 バインディング・環境変数 |

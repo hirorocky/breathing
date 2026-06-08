@@ -72,6 +72,8 @@ export async function hashIp(request: Request): Promise<string> {
     .slice(0, 32);
 }
 
+import { nowUnixSeconds } from "./time";
+
 export async function checkIpThrottle(
   env: SecurityEnv & { DB: D1Database },
   ipHash: string,
@@ -79,7 +81,7 @@ export async function checkIpThrottle(
 ): Promise<{ allowed: boolean; retryAfterSec?: number }> {
   const windowSec = parsePositiveInt(env.IP_THROTTLE_WINDOW_SEC, 60);
   const maxRequests = parsePositiveInt(env.IP_THROTTLE_MAX, 120);
-  const now = Math.floor(Date.now() / 1000);
+  const now = nowUnixSeconds();
   const windowStart = Math.floor(now / windowSec) * windowSec;
 
   const row = await env.DB.prepare(

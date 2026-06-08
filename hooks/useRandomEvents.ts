@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getEventConfig, type EventTimingConfig } from "@/lib/events/config";
 import { pickRandomEventType } from "@/components/events/registry";
 import type { ActiveEvent } from "@/lib/events/types";
+import { nowMs } from "@/lib/time";
 
 function randomIntervalMs(config: EventTimingConfig): number {
   return (
@@ -45,7 +46,7 @@ export function useRandomEvents({ enabled = true, debug = false }: Options = {})
         return;
       }
 
-      setNextFireAt(Date.now() + delayMs);
+      setNextFireAt(nowMs() + delayMs);
 
       timerRef.current = window.setTimeout(() => {
         if (!enabledRef.current) return;

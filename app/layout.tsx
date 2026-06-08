@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Shippori_Mincho } from "next/font/google";
+import { TemporalPolyfill } from "@/components/TemporalPolyfill";
 import { APP_TITLE } from "@/lib/constants";
 import "./globals.css";
 
@@ -29,7 +30,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className={`${serif.variable} ${mono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <TemporalPolyfill />
+        {children}
+      </body>
     </html>
   );
 }

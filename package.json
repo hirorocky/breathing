@@ -14,6 +14,7 @@
     "typecheck:worker": "npm run typecheck --prefix worker"
   },
   "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
     "next": "^15.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

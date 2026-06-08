@@ -6,6 +6,8 @@ export type BudgetEnv = {
   STATIC_ONLY_MODE?: string;
 };
 
+import { utcDayKey, utcMonthKey } from "./time";
+
 export type BudgetCheck = {
   allowed: boolean;
   reason?: "static_only_mode" | "daily_limit" | "monthly_limit";
@@ -14,14 +16,6 @@ export type BudgetCheck = {
   dailyLimit?: number;
   monthlyLimit?: number;
 };
-
-function utcDayKey(now = new Date()): string {
-  return `day:${now.toISOString().slice(0, 10)}`;
-}
-
-function utcMonthKey(now = new Date()): string {
-  return `month:${now.toISOString().slice(0, 7)}`;
-}
 
 function parseLimit(value: string | undefined, fallback: number): number {
   const parsed = Number(value);

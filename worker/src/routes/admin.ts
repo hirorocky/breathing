@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { isStaticOnlyForced } from "../budget";
+import { utcDayKey, utcMonthKey } from "../time";
 import type { AppEnv } from "../types";
 
 export const adminRoutes = new Hono<AppEnv>();
@@ -20,8 +21,8 @@ adminRoutes.use("*", async (c, next) => {
 });
 
 adminRoutes.get("/stats", async (c) => {
-  const dayKey = `day:${new Date().toISOString().slice(0, 10)}`;
-  const monthKey = `month:${new Date().toISOString().slice(0, 7)}`;
+  const dayKey = utcDayKey();
+  const monthKey = utcMonthKey();
 
   const usage = await c.env.DB.prepare(
     `SELECT period_key, count FROM api_usage WHERE period_key IN (?, ?)`,

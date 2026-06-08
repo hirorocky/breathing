@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { INTERACTION } from "@/lib/interaction/constants";
+import { nowMs } from "@/lib/time";
 
 export type Ripple = {
   id: number;
@@ -42,7 +43,7 @@ export function useInteractionState(options: Options = {}) {
   useEffect(() => clearBoostTimer, [clearBoostTimer]);
 
   const triggerRipple = useCallback((x: number, y: number) => {
-    const now = Date.now();
+    const now = nowMs();
     if (now - lastRippleAt.current < INTERACTION.rippleDebounceMs) return false;
 
     lastRippleAt.current = now;
@@ -57,7 +58,7 @@ export function useInteractionState(options: Options = {}) {
   }, []);
 
   const triggerBreathClick = useCallback(() => {
-    const now = Date.now();
+    const now = nowMs();
     if (now - lastBreathClickAt.current < INTERACTION.breathClickCooldownMs) {
       return false;
     }

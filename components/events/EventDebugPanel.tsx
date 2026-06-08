@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { getEventDefinition } from "@/components/events/registry";
 import type { ActiveEvent } from "@/lib/events/types";
+import { nowMs } from "@/lib/time";
 
 type Props = {
   activeEvent: ActiveEvent | null;
@@ -12,7 +13,7 @@ type Props = {
 
 function getRemainingSeconds(nextFireAt: number | null): number | null {
   if (nextFireAt === null) return null;
-  return Math.max(0, Math.ceil((nextFireAt - Date.now()) / 1000));
+  return Math.max(0, Math.ceil((nextFireAt - nowMs()) / 1000));
 }
 
 function useRemainingSeconds(nextFireAt: number | null): number | null {
