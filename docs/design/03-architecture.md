@@ -42,7 +42,7 @@ Durable Objects は使わない。Workers Free 枠内で始めやすい構成。
 - `GET /api/presence` で D1 `active_sessions` を upsert
 - 直近 `PRESENCE_WINDOW_SEC`（既定 300s）の件数を `count` として返す
 - クライアントは `NEXT_PUBLIC_PRESENCE_POLL_MS`（既定 60s）ごとに polling
-- 終了した visit は `session_visits` に確定保存（[11-session-visits.md](./11-session-visits.md)）
+- 終了した visit は Cron（5 分間隔）で `session_visits` に確定（[11-session-visits.md](./11-session-visits.md)）
 
 即時性を上げないため WebSocket は使わない。
 

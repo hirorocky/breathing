@@ -4,8 +4,9 @@ import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 import { adminRoutes } from "./routes/admin";
 import { publicRoutes } from "./routes/public";
+import { runVisitMaintenance } from "./scheduled";
 import { parseAllowedOrigins } from "./security";
-import type { AppEnv } from "./types";
+import type { AppEnv, Env } from "./types";
 
 const app = new Hono<AppEnv>();
 
@@ -36,4 +37,13 @@ app.onError((err, c) => {
   return c.json({ error: "internal_error" }, 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  scheduled(
+    _event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext,
+  ): void {
+    ctx.waitUntil(runVisitMaintenance(env));
+  },
+};

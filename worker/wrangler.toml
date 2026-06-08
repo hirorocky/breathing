@@ -25,6 +25,10 @@ MAX_BODY_BYTES = "1024"
 
 # ADMIN_TOKEN は wrangler secret put ADMIN_TOKEN で設定
 
+# Workers Cron（Free 枠可）— visit 確定・期限削除。日次 ~288 回
+[triggers]
+crons = ["*/5 * * * *"]
+
 [dev]
 port = 8787
 local_protocol = "http"
