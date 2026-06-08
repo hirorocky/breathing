@@ -30,8 +30,8 @@ export const CONFIG = {
   maxStoredWords: 40,
 } as const;
 
-/** サーバー側 D1 に保持する言葉の上限（worker WORDS_MAX_STORED と一致） */
-export const SERVER_WORDS_MAX_STORED = 10_000;
+/** サーバー側 D1 に保持する言葉の期間（年）。worker WORDS_RETENTION_SEC と一致 */
+export const SERVER_WORDS_RETENTION_YEARS = 1;
 
 /** 失敗した言葉 POST の再送キュー上限 */
 export const PENDING_WORDS_MAX = 8;

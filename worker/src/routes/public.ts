@@ -78,7 +78,8 @@ publicRoutes.post(
     }
 
     const id = crypto.randomUUID();
-    const maxStored = parsePositiveInt(c.env.WORDS_MAX_STORED, 10_000);
+    const retentionSec = parsePositiveInt(c.env.WORDS_RETENTION_SEC, 31_536_000);
+    const retentionCutoff = now - retentionSec;
 
     await c.env.DB.batch([
       c.env.DB.prepare(
@@ -88,11 +89,9 @@ publicRoutes.post(
         `INSERT INTO rate_limits (ip_hash, last_post) VALUES (?, ?)
          ON CONFLICT(ip_hash) DO UPDATE SET last_post = excluded.last_post`,
       ).bind(ipHash, now),
-      c.env.DB.prepare(
-        `DELETE FROM words WHERE id NOT IN (
-           SELECT id FROM words ORDER BY created_at DESC LIMIT ?
-         )`,
-      ).bind(maxStored),
+      c.env.DB.prepare(`DELETE FROM words WHERE created_at < ?`).bind(
+        retentionCutoff,
+      ),
     ]);
 
     attachSession(c, sessionId);

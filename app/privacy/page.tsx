@@ -1,79 +1,85 @@
+import type { Metadata } from "next";
 import Link from "next/link";
-import {
-  APP_TITLE,
-  PRIVACY_CONTACT,
-  SERVER_WORDS_MAX_STORED,
-} from "@/lib/constants";
+import { PRIVACY_CONTACT, SERVER_WORDS_RETENTION_YEARS } from "@/lib/constants";
 
-/** 開示の層 3 — 法務上の足り。トーンは事務的・短く。 */
+export const metadata: Metadata = {
+  title: "データの取扱いについて",
+};
+
+/** ? からのリンク先。各段落は見出しなしでも意味が通るよう書く */
 export default function PrivacyPage() {
   return (
     <main className="privacy-page">
       <div className="privacy-card">
-        <p className="privacy-eyebrow">about this space</p>
-        <h1 className="privacy-title">この場について</h1>
+        <h1 className="privacy-title">データの取扱いについて</h1>
+        <p className="privacy-lead">
+          このページでは、場を使うときにどんな情報がどこに残るか、誰が見られるかを説明します。
+        </p>
 
         <section>
-          <h2>この場は何か</h2>
+          <h2>あなたの画面に見えるもの</h2>
+          <p>あなたの画面には、あなたが入力した言葉が見えます。</p>
           <p>
-            {APP_TITLE}
-            は、「存在の負荷を少し下げられるか」を試す小さな実験です。利用者数や滞在時間を競わせる場ではありません。
+            あなたの画面には、サービスを今使っている人数が見えます。
           </p>
         </section>
 
         <section>
-          <h2>他の利用者に見えるもの</h2>
+          <h2>他の人の画面に見えるもの</h2>
           <p>
-            いまおおよそ何人いるか（気配）だけです。名前、アイコン、プロフィール、誰が書いたかは表示しません。他の利用者が置いた言葉も、あなたの画面には出ません。
+            他の人の画面には、他の人が入力した言葉が見えます。あなたの言葉は、他の人の画面には見えません。
           </p>
         </section>
 
         <section>
-          <h2>場をつくっている人に見えるもの</h2>
+          <h2>サーバーに保存されるもの</h2>
+          <p>あなたが入力した言葉は、サーバーに保存されます。</p>
           <p>
-            あなたが置いた言葉の文面です。画面では自分にだけ見えていても、サーバーに送られ、場をつくっている人があとから読むことがあります。評価や返信のためではなく、場の空気を観察し、設計を直すためです。
-          </p>
-          <p>
-            また、おおよその利用の様子（いつ頃使われたか、おおよその人数など）を、個人を特定しない形で見ています。名前やメールアドレスの登録はありません。
-          </p>
-        </section>
-
-        <section>
-          <h2>目的</h2>
-          <p>
-            補正や自己演出が少ない空気が、実際に感じられるかを観察するためです。第三者への提供や広告目的では使いません。
+            サーバーに保存された言葉は、送信から{" "}
+            {SERVER_WORDS_RETENTION_YEARS}年が経ったものから削除されます。
           </p>
         </section>
 
         <section>
-          <h2>保管と削除</h2>
+          <h2>サービス運営者が見られるもの</h2>
+          <p>サービス運営者は、このサイトを運営する者を指します。</p>
           <p>
-            置いた言葉は観察用にサーバーに保存します。おおよそ{" "}
-            {SERVER_WORDS_MAX_STORED.toLocaleString("ja-JP")}
-            件を超えた分から、古いもの順に削除します。画面に漂う言葉（最大
-            40 件）はブラウザ内だけで、リロードすると消えます。
+            サービス運営者は、サーバーに保存された言葉の文面を見ることがあります。いつ頃使われたかや、おおよその人数などの利用状況も、個人を特定できない形で見ることがあります。
+          </p>
+          <p>
+            サービス運営者がそれらを見る目的は、返信や評価ではなく、場の様子を把握して設計を見直すことです。第三者への提供や広告目的では使いません。
+          </p>
+          <p>
+            このサイトの利用にあたり、アカウント登録や名前・メールアドレスの入力は必要ありません。
           </p>
         </section>
 
         <section>
           <h2>お問い合わせ</h2>
           <p>
-            取扱いについての質問は、運営者までご連絡ください。
-            <br />
+            データの取扱いについての質問は、サービス運営者までメールでご連絡ください。
+          </p>
+          <p>
             {PRIVACY_CONTACT ? (
-              <a href={`mailto:${PRIVACY_CONTACT}`} className="privacy-contact">
-                {PRIVACY_CONTACT}
-              </a>
+              <>
+                サービス運営者のメールアドレスは{" "}
+                <a href={`mailto:${PRIVACY_CONTACT}`} className="privacy-contact">
+                  {PRIVACY_CONTACT}
+                </a>{" "}
+                です。
+              </>
             ) : (
-              <span className="privacy-contact">
-                連絡先は公開時に本ページへ記載します
-              </span>
+              <>
+                サービス運営者のメールアドレスは、公開時に本ページへ記載します。
+              </>
             )}
           </p>
         </section>
 
         <p className="privacy-back">
-          <Link href="/">場に戻る</Link>
+          <Link href="/" className="help-privacy-link">
+            場に戻る
+          </Link>
         </p>
       </div>
     </main>

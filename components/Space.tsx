@@ -334,10 +334,6 @@ export function Space() {
         onPlace={handlePlaceWord}
       />
 
-      <a href="/privacy" className="space-about-link">
-        この場について
-      </a>
-
       <button
         type="button"
         className="help-toggle"

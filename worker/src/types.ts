@@ -5,7 +5,7 @@ export type Env = BudgetEnv &
   SecurityEnv & {
     DB: D1Database;
     PRESENCE_WINDOW_SEC?: string;
-    WORDS_MAX_STORED?: string;
+    WORDS_RETENTION_SEC?: string;
     WORD_RATE_LIMIT_SEC?: string;
   };
 
