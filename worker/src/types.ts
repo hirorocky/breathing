@@ -12,7 +12,7 @@ export type Env = BudgetEnv &
 export type AppEnv = {
   Bindings: Env;
   Variables: {
-    ipHash: string;
+    ipHash: Uint8Array;
     sessionId: string;
   };
 };

@@ -6,7 +6,8 @@ export type BudgetEnv = {
   STATIC_ONLY_MODE?: string;
 };
 
-import { utcDayKey, utcMonthKey } from "./time";
+import { USAGE_GRANULARITY } from "./db/usage";
+import { utcDayStartUnix, utcMonthStartUnix } from "./time";
 
 export type BudgetCheck = {
   allowed: boolean;
@@ -37,20 +38,31 @@ export async function checkBudget(env: BudgetEnv): Promise<BudgetCheck> {
 
   const dailyLimit = parseLimit(env.BUDGET_DAILY_REQUESTS, 90_000);
   const monthlyLimit = parseLimit(env.BUDGET_MONTHLY_REQUESTS, 9_000_000);
-  const dayKey = utcDayKey();
-  const monthKey = utcMonthKey();
+  const dayStart = utcDayStartUnix();
+  const monthStart = utcMonthStartUnix();
 
   const usage = await env.DB.prepare(
-    `SELECT period_key, count FROM api_usage WHERE period_key IN (?, ?)`,
+    `SELECT granularity, period_start, request_count FROM api_usage_buckets
+     WHERE (granularity = ? AND period_start = ?)
+        OR (granularity = ? AND period_start = ?)`,
   )
-    .bind(dayKey, monthKey)
-    .all<{ period_key: string; count: number }>();
+    .bind(
+      USAGE_GRANULARITY.day,
+      dayStart,
+      USAGE_GRANULARITY.month,
+      monthStart,
+    )
+    .all<{
+      granularity: number;
+      period_start: number;
+      request_count: number;
+    }>();
 
   const counts = new Map(
-    (usage.results ?? []).map((row) => [row.period_key, row.count]),
+    (usage.results ?? []).map((row) => [row.granularity, row.request_count]),
   );
-  const dailyCount = counts.get(dayKey) ?? 0;
-  const monthlyCount = counts.get(monthKey) ?? 0;
+  const dailyCount = counts.get(USAGE_GRANULARITY.day) ?? 0;
+  const monthlyCount = counts.get(USAGE_GRANULARITY.month) ?? 0;
 
   if (dailyCount >= dailyLimit) {
     return {
@@ -93,17 +105,17 @@ export async function recordApiUsage(env: BudgetEnv): Promise<void> {
     return;
   }
 
-  const dayKey = utcDayKey();
-  const monthKey = utcMonthKey();
+  const dayStart = utcDayStartUnix();
+  const monthStart = utcMonthStartUnix();
 
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO api_usage (period_key, count) VALUES (?, 1)
-       ON CONFLICT(period_key) DO UPDATE SET count = count + 1`,
-    ).bind(dayKey),
+      `INSERT INTO api_usage_buckets (granularity, period_start, request_count) VALUES (?, ?, 1)
+       ON CONFLICT(granularity, period_start) DO UPDATE SET request_count = request_count + 1`,
+    ).bind(USAGE_GRANULARITY.day, dayStart),
     env.DB.prepare(
-      `INSERT INTO api_usage (period_key, count) VALUES (?, 1)
-       ON CONFLICT(period_key) DO UPDATE SET count = count + 1`,
-    ).bind(monthKey),
+      `INSERT INTO api_usage_buckets (granularity, period_start, request_count) VALUES (?, ?, 1)
+       ON CONFLICT(granularity, period_start) DO UPDATE SET request_count = request_count + 1`,
+    ).bind(USAGE_GRANULARITY.month, monthStart),
   ]);
 }
