@@ -411,9 +411,41 @@ npx wrangler deploy
 
 §8 で得た URL（例: `https://breathing.pages.dev`）を本番 URL とする。
 
-Dashboard → Pages プロジェクト → **Settings** → **Functions** または **Bindings** で、Worker `breathing-api` を関連付ける設定を探す（UI 名は **Worker** / **Companion worker** など）。
+`pages.dev` にはゾーンがないため、Worker の `[[routes]]` は使えない。代わりに **Pages Functions が `/api/*` を受け、Service binding で `breathing-api` に転送**する（リポジトリに `functions/api/[[path]].ts` と `public/_routes.json` がある）。
 
-見つからない・`/api` が 404 のときは §9A のカスタムドメインを検討。
+#### 9B-1. Service binding を付ける
+
+1. Dashboard → **Workers & Pages** → Pages プロジェクト（`breathing`）を開く
+2. **Settings** → **Bindings** → **Add** → **Service binding**
+3. 次を設定して保存:
+
+| 項目 | 値 |
+|---|---|
+| Variable name | `BREATHING_API` |
+| Service | `breathing-api` |
+| Environment | Production（Preview も同じでよい） |
+
+`functions/api/[[path]].ts` の `context.env.BREATHING_API` と名前を一致させる。
+
+#### 9B-2. Pages を再デプロイ
+
+Service binding を付けたあと、**Deployments** → 最新を **Retry deployment**、または `main` に空でない commit を push する。
+
+`functions/` を含むビルドが走り、`https://<project>.pages.dev/api/presence` が Worker に届く。
+
+#### 9B-3. 動作確認（ALLOWED_ORIGINS の前でも可）
+
+```bash
+curl -s "https://<project>.pages.dev/api/presence"
+```
+
+JSON が返れば 9B の接続は成功。403 なら §10 の `ALLOWED_ORIGINS` を確認。
+
+**うまくいかないとき**
+
+- `/api` が 404 → Binding 名が `BREATHING_API` か、Pages が `functions/` 付きで再デプロイされたか
+- `/api` が 403 → §10
+- それでもダメ → §9A のカスタムドメインを検討
 
 **非推奨の回避策:** `NEXT_PUBLIC_API_BASE` に `workers.dev` の URL を入れる方法もあるが、Cookie / CORS で不安定になりやすい。
 
