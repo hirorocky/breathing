@@ -21,6 +21,10 @@ const mono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: APP_TITLE,
   description: "何もしなくていい。ただ、息が戻るまで、居ていい場所。",
+  icons: {
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    shortcut: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({
