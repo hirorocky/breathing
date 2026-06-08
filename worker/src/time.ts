@@ -12,14 +12,14 @@ function utcMidnightUnix(plainDate: Temporal.PlainDate): number {
   return Math.floor(zdt.epochMilliseconds / 1000);
 }
 
-/** 当日 UTC 00:00 の unix 秒（api_usage_buckets 用） */
+/** 当日 UTC 00:00 の unix 秒（api_usage 用） */
 export function utcDayStartUnix(
   instant: Temporal.Instant = Temporal.Now.instant(),
 ): number {
   return utcMidnightUnix(instant.toZonedDateTimeISO("UTC").toPlainDate());
 }
 
-/** 当月 1 日 UTC 00:00 の unix 秒（api_usage_buckets 用） */
+/** 当月 1 日 UTC 00:00 の unix 秒（api_usage 用） */
 export function utcMonthStartUnix(
   instant: Temporal.Instant = Temporal.Now.instant(),
 ): number {

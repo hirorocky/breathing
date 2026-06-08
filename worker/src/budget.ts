@@ -42,7 +42,7 @@ export async function checkBudget(env: BudgetEnv): Promise<BudgetCheck> {
   const monthStart = utcMonthStartUnix();
 
   const usage = await env.DB.prepare(
-    `SELECT granularity, period_start, request_count FROM api_usage_buckets
+    `SELECT granularity, period_start, count FROM api_usage
      WHERE (granularity = ? AND period_start = ?)
         OR (granularity = ? AND period_start = ?)`,
   )
@@ -55,11 +55,11 @@ export async function checkBudget(env: BudgetEnv): Promise<BudgetCheck> {
     .all<{
       granularity: number;
       period_start: number;
-      request_count: number;
+      count: number;
     }>();
 
   const counts = new Map(
-    (usage.results ?? []).map((row) => [row.granularity, row.request_count]),
+    (usage.results ?? []).map((row) => [row.granularity, row.count]),
   );
   const dailyCount = counts.get(USAGE_GRANULARITY.day) ?? 0;
   const monthlyCount = counts.get(USAGE_GRANULARITY.month) ?? 0;
@@ -110,12 +110,12 @@ export async function recordApiUsage(env: BudgetEnv): Promise<void> {
 
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO api_usage_buckets (granularity, period_start, request_count) VALUES (?, ?, 1)
-       ON CONFLICT(granularity, period_start) DO UPDATE SET request_count = request_count + 1`,
+      `INSERT INTO api_usage (granularity, period_start, count) VALUES (?, ?, 1)
+       ON CONFLICT(granularity, period_start) DO UPDATE SET count = count + 1`,
     ).bind(USAGE_GRANULARITY.day, dayStart),
     env.DB.prepare(
-      `INSERT INTO api_usage_buckets (granularity, period_start, request_count) VALUES (?, ?, 1)
-       ON CONFLICT(granularity, period_start) DO UPDATE SET request_count = request_count + 1`,
+      `INSERT INTO api_usage (granularity, period_start, count) VALUES (?, ?, 1)
+       ON CONFLICT(granularity, period_start) DO UPDATE SET count = count + 1`,
     ).bind(USAGE_GRANULARITY.month, monthStart),
   ]);
 }

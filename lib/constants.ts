@@ -33,6 +33,9 @@ export const CONFIG = {
 /** サーバー側 D1 に保持する言葉の期間（年）。worker WORDS_RETENTION_SEC と一致 */
 export const SERVER_WORDS_RETENTION_YEARS = 1;
 
+/** 訪問記録の保持期間（年）。worker SESSION_VISITS_RETENTION_SEC と一致 */
+export const SERVER_SESSION_VISITS_RETENTION_YEARS = 1;
+
 /** 失敗した言葉 POST の再送キュー上限 */
 export const PENDING_WORDS_MAX = 8;
 

@@ -25,7 +25,7 @@
 | `STATIC_ONLY_MODE` | `false` | `true` で即 API 停止 |
 | `PRESENCE_WINDOW_SEC` | `300` | 気配カウント窓（秒） |
 | `WORDS_MAX_STORED` | `10000` | 言葉の保持上限 |
-| `WORD_RATE_LIMIT_SEC` | `30` | 同一 IP の投稿間隔 |
+| `SESSION_VISITS_RETENTION_SEC` | `31536000` | visit 記録の保持期間（秒） |
 | `ALLOWED_ORIGINS` | — | 本番 URL（カンマ区切り） |
 | `IP_THROTTLE_WINDOW_SEC` | `60` | IP スロットル窓 |
 | `IP_THROTTLE_MAX` | `120` | 窓あたり最大リクエスト |

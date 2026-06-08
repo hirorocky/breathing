@@ -16,8 +16,7 @@
 | 対策 | 設定 |
 |---|---|
 | 予算ガード | `BUDGET_*` |
-| IP スロットル | `IP_THROTTLE_*` |
-| 言葉 POST 制限 | `WORD_RATE_LIMIT_SEC` |
+| IP スロットル | `IP_THROTTLE_*`（presence / words 共通） |
 | 入力検証 | 1〜24 文字、URL 禁止、body 1KB |
 | セッション Cookie | HttpOnly / SameSite=Lax / Secure(HTTPS) |
 | Admin 認証 | `hono/bearer-auth` |

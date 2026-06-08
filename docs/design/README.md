@@ -10,3 +10,4 @@
 8. [08-deployment.md](./08-deployment.md) — デプロイと CI/CD
 9. [09-security.md](./09-security.md) — セキュリティ
 10. [10-code-map.md](./10-code-map.md) — 主要ファイル一覧
+11. [11-session-visits.md](./11-session-visits.md) — 訪問の開始・滞在秒数の記録（設計）

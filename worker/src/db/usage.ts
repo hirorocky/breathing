@@ -1,4 +1,4 @@
-/** api_usage_buckets.granularity */
+/** api_usage.granularity */
 
 export const USAGE_GRANULARITY = {
   day: 1,

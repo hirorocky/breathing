@@ -6,7 +6,7 @@ export type SecurityEnv = {
   MAX_BODY_BYTES?: string;
 };
 
-import type { RouteId } from "./db/routes";
+import type { ThrottleRoute } from "./db/routes";
 import { nowUnixSeconds } from "./time";
 
 const UUID_RE =
@@ -65,18 +65,19 @@ export function isOriginAllowed(
   return false;
 }
 
-/** SHA-256 の先頭 16 バイト（D1 BLOB 用） */
-export async function hashIp(request: Request): Promise<Uint8Array> {
+/** SHA-256 の先頭 16 バイトを小文字 hex（32 文字）で返す */
+export async function hashIp(request: Request): Promise<string> {
   const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
   const data = new TextEncoder().encode(ip);
   const digest = await crypto.subtle.digest("SHA-256", data);
-  return new Uint8Array(digest).slice(0, 16);
+  const bytes = new Uint8Array(digest).slice(0, 16);
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function checkIpThrottle(
   env: SecurityEnv & { DB: D1Database },
-  ipHash: Uint8Array,
-  routeId: RouteId,
+  ipHash: string,
+  route: ThrottleRoute,
 ): Promise<{ allowed: boolean; retryAfterSec?: number }> {
   const windowSec = parsePositiveInt(env.IP_THROTTLE_WINDOW_SEC, 60);
   const maxRequests = parsePositiveInt(env.IP_THROTTLE_MAX, 120);
@@ -84,32 +85,32 @@ export async function checkIpThrottle(
   const windowStart = Math.floor(now / windowSec) * windowSec;
 
   const row = await env.DB.prepare(
-    `SELECT window_start, request_count FROM ip_request_windows WHERE ip_hash = ? AND route_id = ?`,
+    `SELECT window_start, count FROM ip_throttle WHERE ip_hash = ? AND route = ?`,
   )
-    .bind(ipHash, routeId)
-    .first<{ window_start: number; request_count: number }>();
+    .bind(ipHash, route)
+    .first<{ window_start: number; count: number }>();
 
   if (!row || row.window_start !== windowStart) {
     await env.DB.prepare(
-      `INSERT INTO ip_request_windows (ip_hash, route_id, window_start, request_count) VALUES (?, ?, ?, 1)
-       ON CONFLICT(ip_hash, route_id) DO UPDATE SET
+      `INSERT INTO ip_throttle (ip_hash, route, window_start, count) VALUES (?, ?, ?, 1)
+       ON CONFLICT(ip_hash, route) DO UPDATE SET
          window_start = excluded.window_start,
-         request_count = excluded.request_count`,
+         count = excluded.count`,
     )
-      .bind(ipHash, routeId, windowStart)
+      .bind(ipHash, route, windowStart)
       .run();
     return { allowed: true };
   }
 
-  if (row.request_count >= maxRequests) {
+  if (row.count >= maxRequests) {
     const retryAfterSec = windowStart + windowSec - now;
     return { allowed: false, retryAfterSec: Math.max(1, retryAfterSec) };
   }
 
   await env.DB.prepare(
-    `UPDATE ip_request_windows SET request_count = request_count + 1 WHERE ip_hash = ? AND route_id = ?`,
+    `UPDATE ip_throttle SET count = count + 1 WHERE ip_hash = ? AND route = ?`,
   )
-    .bind(ipHash, routeId)
+    .bind(ipHash, route)
     .run();
 
   return { allowed: true };

@@ -1,6 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
-import { routeIdFromPath } from "../db/routes";
+import { routeFromPath } from "../db/routes";
 import { checkIpThrottle, hashIp } from "../security";
 import type { AppEnv } from "../types";
 
@@ -11,7 +11,7 @@ export const ipThrottleGuard = createMiddleware<AppEnv>(async (c, next) => {
   const throttle = await checkIpThrottle(
     c.env,
     ipHash,
-    routeIdFromPath(c.req.path),
+    routeFromPath(c.req.path),
   );
 
   if (!throttle.allowed) {

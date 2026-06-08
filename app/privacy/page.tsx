@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { PRIVACY_CONTACT, SERVER_WORDS_RETENTION_YEARS } from "@/lib/constants";
+import {
+  PRIVACY_CONTACT,
+  SERVER_SESSION_VISITS_RETENTION_YEARS,
+  SERVER_WORDS_RETENTION_YEARS,
+} from "@/lib/constants";
 
 export const metadata: Metadata = {
   title: "データの取扱いについて",
@@ -37,6 +41,10 @@ export default function PrivacyPage() {
           <p>
             サーバーに保存された言葉は、送信から{" "}
             {SERVER_WORDS_RETENTION_YEARS}年が経ったものから削除されます。
+          </p>
+          <p>
+            匿名の識別子ごとに、いつ頃場にいたか・およそ何秒いたかが、個人を特定できない形で記録されることがあります。記録は訪問の終了から{" "}
+            {SERVER_SESSION_VISITS_RETENTION_YEARS}年が経ったものから削除されます。
           </p>
         </section>
 

@@ -1,7 +1,12 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { optionalUuidToBlob, uuidToBlob } from "../db/binary";
+import {
+  archiveAndDeleteStaleSessions,
+  purgeExpiredSessionVisits,
+  sessionVisitsRetentionSec,
+  upsertPresence,
+} from "../db/visits";
 import { budgetGuard } from "../middleware/budget";
 import { ipThrottleGuard } from "../middleware/ipThrottle";
 import { originGuard } from "../middleware/origin";
@@ -25,22 +30,16 @@ function shouldPurgePresence(now: number): boolean {
 
 publicRoutes.get("/presence", ...publicGuards, async (c) => {
   const sessionId = resolveSession(c);
-  const sessionBlob = uuidToBlob(sessionId);
   const now = nowUnixSeconds();
   const windowSec = parsePositiveInt(c.env.PRESENCE_WINDOW_SEC, 300);
   const cutoff = now - windowSec;
+  const visitRetentionSec = sessionVisitsRetentionSec(c.env);
 
-  await c.env.DB.prepare(
-    `INSERT INTO active_sessions (session_id, last_seen_at) VALUES (?, ?)
-     ON CONFLICT(session_id) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
-  )
-    .bind(sessionBlob, now)
-    .run();
+  await upsertPresence(c.env.DB, sessionId, now, cutoff, visitRetentionSec);
 
   if (shouldPurgePresence(now)) {
-    await c.env.DB.prepare(`DELETE FROM active_sessions WHERE last_seen_at < ?`)
-      .bind(cutoff)
-      .run();
+    await archiveAndDeleteStaleSessions(c.env.DB, cutoff, visitRetentionSec);
+    await purgeExpiredSessionVisits(c.env.DB, now);
   }
 
   const countRow = await c.env.DB.prepare(
@@ -71,34 +70,18 @@ publicRoutes.post(
     }
 
     const sessionId = resolveSession(c);
-    const ipHash = c.get("ipHash");
     const now = nowUnixSeconds();
-    const rateSec = parsePositiveInt(c.env.WORD_RATE_LIMIT_SEC, 30);
     const retentionSec = parsePositiveInt(c.env.WORDS_RETENTION_SEC, 31_536_000);
 
-    const rateRow = await c.env.DB.prepare(
-      `SELECT last_posted_at FROM word_post_cooldowns WHERE ip_hash = ?`,
-    )
-      .bind(ipHash)
-      .first<{ last_posted_at: number }>();
-
-    if (rateRow && now - rateRow.last_posted_at < rateSec) {
-      return c.json({ error: "rate_limited" }, 429);
-    }
-
-    const idBlob = uuidToBlob(crypto.randomUUID());
-    const sessionBlob = optionalUuidToBlob(sessionId);
+    const id = crypto.randomUUID();
     const expiresAt = now + retentionSec;
 
     await c.env.DB.batch([
       c.env.DB.prepare(
-        `INSERT INTO word_entries (id, body, session_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
-      ).bind(idBlob, text, sessionBlob, now, expiresAt),
-      c.env.DB.prepare(
-        `INSERT INTO word_post_cooldowns (ip_hash, last_posted_at) VALUES (?, ?)
-         ON CONFLICT(ip_hash) DO UPDATE SET last_posted_at = excluded.last_posted_at`,
-      ).bind(ipHash, now),
-      c.env.DB.prepare(`DELETE FROM word_entries WHERE expires_at < ?`).bind(
+        `INSERT INTO words (id, text, session_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`,
+      ).bind(id, text, sessionId, now, expiresAt),
+      c.env.DB.prepare(`DELETE FROM words WHERE expires_at < ?`).bind(now),
+      c.env.DB.prepare(`DELETE FROM session_visits WHERE expires_at < ?`).bind(
         now,
       ),
     ]);

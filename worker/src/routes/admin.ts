@@ -3,9 +3,12 @@ import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { isStaticOnlyForced } from "../budget";
-import { blobToUuid, optionalBlobToUuid } from "../db/binary";
 import { USAGE_GRANULARITY } from "../db/usage";
-import { utcDayStartUnix, utcMonthStartUnix } from "../time";
+import {
+  medianOf,
+  percentileOf,
+} from "../db/visits";
+import { nowUnixSeconds, utcDayStartUnix, utcMonthStartUnix } from "../time";
 import type { AppEnv } from "../types";
 
 export const adminRoutes = new Hono<AppEnv>();
@@ -27,7 +30,7 @@ adminRoutes.get("/stats", async (c) => {
   const monthStart = utcMonthStartUnix();
 
   const usage = await c.env.DB.prepare(
-    `SELECT granularity, period_start, request_count FROM api_usage_buckets
+    `SELECT granularity, period_start, count FROM api_usage
      WHERE (granularity = ? AND period_start = ?)
         OR (granularity = ? AND period_start = ?)`,
   )
@@ -40,15 +43,15 @@ adminRoutes.get("/stats", async (c) => {
     .all<{
       granularity: number;
       period_start: number;
-      request_count: number;
+      count: number;
     }>();
 
   const counts = new Map(
-    (usage.results ?? []).map((row) => [row.granularity, row.request_count]),
+    (usage.results ?? []).map((row) => [row.granularity, row.count]),
   );
 
   const wordCount = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM word_entries`,
+    `SELECT COUNT(*) AS count FROM words`,
   ).first<{ count: number }>();
 
   return c.json({
@@ -71,23 +74,49 @@ adminRoutes.get("/stats", async (c) => {
 
 adminRoutes.get("/words", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT id, body, session_id, created_at, expires_at
-     FROM word_entries ORDER BY created_at DESC LIMIT 500`,
+    `SELECT id, text, session_id, created_at, expires_at
+     FROM words ORDER BY created_at DESC LIMIT 500`,
   ).all<{
-    id: ArrayBuffer;
-    body: string;
-    session_id: ArrayBuffer | null;
+    id: string;
+    text: string;
+    session_id: string | null;
     created_at: number;
     expires_at: number;
   }>();
 
   const words = (rows.results ?? []).map((row) => ({
-    id: blobToUuid(row.id),
-    text: row.body,
-    session_id: optionalBlobToUuid(row.session_id),
+    id: row.id,
+    text: row.text,
+    session_id: row.session_id,
     created_at: row.created_at,
     expires_at: row.expires_at,
   }));
 
   return c.json({ words });
+});
+
+adminRoutes.get("/session-stats", async (c) => {
+  const now = nowUnixSeconds();
+  const dayAgo = now - 86_400;
+
+  const stored = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM session_visits`,
+  ).first<{ count: number }>();
+
+  const durations = await c.env.DB.prepare(
+    `SELECT duration_sec FROM session_visits WHERE ended_at >= ? ORDER BY duration_sec`,
+  )
+    .bind(dayAgo)
+    .all<{ duration_sec: number }>();
+
+  const values = (durations.results ?? []).map((row) => row.duration_sec);
+
+  return c.json({
+    visitsStored: stored?.count ?? 0,
+    last24h: {
+      visitCount: values.length,
+      medianDurationSec: medianOf(values),
+      p90DurationSec: percentileOf(values, 90),
+    },
+  });
 });

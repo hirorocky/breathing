@@ -6,13 +6,13 @@ export type Env = BudgetEnv &
     DB: D1Database;
     PRESENCE_WINDOW_SEC?: string;
     WORDS_RETENTION_SEC?: string;
-    WORD_RATE_LIMIT_SEC?: string;
+    SESSION_VISITS_RETENTION_SEC?: string;
   };
 
 export type AppEnv = {
   Bindings: Env;
   Variables: {
-    ipHash: Uint8Array;
+    ipHash: string;
     sessionId: string;
   };
 };
