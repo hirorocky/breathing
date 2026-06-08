@@ -58,7 +58,7 @@ export function Space() {
     amount: 0,
   });
   const breathRef = useRef<HTMLButtonElement | null>(null);
-  const warpImageRef = useRef<SVGFEImageElement | null>(null);
+  const warpGradRef = useRef<SVGRadialGradientElement | null>(null);
   const warpDispRef = useRef<SVGFEDisplacementMapElement | null>(null);
 
   const { debug, toggleDebug } = useDebugMode();
@@ -169,9 +169,9 @@ export function Space() {
 
   useAnimationFrame(() => {
     const el = breathRef.current;
-    const img = warpImageRef.current;
+    const grad = warpGradRef.current;
     const disp = warpDispRef.current;
-    if (!el || !img || !disp) return;
+    if (!el || !grad || !disp) return;
 
     const target = pointerTargetRef.current;
     const smooth = pointerSmoothRef.current;
@@ -210,9 +210,8 @@ export function Space() {
 
     const scale = smooth.amount * 70;
     disp.setAttribute("scale", scale.toFixed(2));
-
-    const maskSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1' preserveAspectRatio='none'><defs><radialGradient id='g' cx='${ux}' cy='${uy}' r='0.52'><stop offset='0' stop-color='white' stop-opacity='1'/><stop offset='0.55' stop-color='white' stop-opacity='0.65'/><stop offset='1' stop-color='black' stop-opacity='0'/></radialGradient></defs><rect width='1' height='1' fill='url(#g)'/></svg>`;
-    img.setAttribute("href", `data:image/svg+xml;utf8,${encodeURIComponent(maskSvg)}`);
+    grad.setAttribute("cx", ux.toFixed(4));
+    grad.setAttribute("cy", uy.toFixed(4));
   }, true);
 
   return (
@@ -266,6 +265,29 @@ export function Space() {
         aria-hidden="true"
         focusable="false"
       >
+        <defs>
+          <radialGradient
+            id="warpMaskGrad"
+            gradientUnits="objectBoundingBox"
+            cx="0.5"
+            cy="0.5"
+            r="0.52"
+            ref={warpGradRef}
+          >
+            <stop offset="0" stopColor="white" stopOpacity="1" />
+            <stop offset="0.55" stopColor="white" stopOpacity="0.65" />
+            <stop offset="1" stopColor="black" stopOpacity="0" />
+          </radialGradient>
+          <svg
+            id="warpMaskImage"
+            viewBox="0 0 1 1"
+            preserveAspectRatio="none"
+            width="1"
+            height="1"
+          >
+            <rect width="1" height="1" fill="url(#warpMaskGrad)" />
+          </svg>
+        </defs>
         <filter
           id="breathWarp"
           x="-25%"
@@ -292,13 +314,7 @@ export function Space() {
               warpDispRef.current = node;
             }}
           />
-          <feImage
-            href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201%201%27%20preserveAspectRatio%3D%27none%27%3E%3Crect%20width%3D%271%27%20height%3D%271%27%20fill%3D%27black%27%2F%3E%3C%2Fsvg%3E"
-            result="mask"
-            ref={(node) => {
-              warpImageRef.current = node;
-            }}
-          />
+          <feImage href="#warpMaskImage" result="mask" preserveAspectRatio="none" />
           <feComposite in="warped" in2="mask" operator="in" result="warpMasked" />
           <feComposite
             in="SourceGraphic"
