@@ -5,7 +5,7 @@ compatibility_date = "2024-11-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "breathing"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "e7a6ad81-92bf-4402-ba88-39c7f01e2c20"
 migrations_dir = "migrations"
 
 [vars]

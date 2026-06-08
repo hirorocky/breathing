@@ -203,8 +203,31 @@ GitHub と独立して進められる。**Pages より先に API の土台を作
 ローカルで `wrangler` を使うとき:
 
 ```bash
+cp .env.cloudflare.example .env.cloudflare
+# CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID を記入
+```
+
+`mise.toml` の `[env]._.file` が `.env.cloudflare` を読み込む（シェルで `mise activate` 済みなら、このディレクトリに入るだけで有効）。手動で export してもよい:
+
+```bash
 export CLOUDFLARE_API_TOKEN="貼り付け"
 export CLOUDFLARE_ACCOUNT_ID="§4.1 の ID"
+```
+
+**API トークンを使う場合、`wrangler login` は不要。** 環境変数 `CLOUDFLARE_API_TOKEN` が入っていると OAuth ログインは拒否される（`Unset the CLOUDFLARE_API_TOKEN...`）。§4 では `wrangler login` を飛ばしてよい。
+
+認証確認:
+
+```bash
+cd worker
+npx wrangler whoami
+```
+
+OAuth でログインしたい場合だけ、一時的にトークンを外す:
+
+```bash
+unset CLOUDFLARE_API_TOKEN
+npx wrangler login
 ```
 
 ---
@@ -214,7 +237,7 @@ export CLOUDFLARE_ACCOUNT_ID="§4.1 の ID"
 ```bash
 cd worker
 npm install
-npx wrangler login     # ブラウザで Cloudflare ログイン（初回のみ）
+# API トークン運用（§3）なら login は不要。whoami で確認してから:
 npx wrangler d1 create breathing
 ```
 

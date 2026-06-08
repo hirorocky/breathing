@@ -60,6 +60,17 @@ NEXT_PUBLIC_ONLINE=1 npm run build
 
 エラーなく `out/` が生成されれば OK です。
 
+### Cloudflare（wrangler）の認証情報
+
+`wrangler login` の代わりに API トークンを使う場合:
+
+```bash
+cp .env.cloudflare.example .env.cloudflare
+# CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID を記入
+```
+
+`mise.toml` が `.env.cloudflare` を自動読み込みします（`mise activate` がシェルに入っていること）。
+
 ### 関連ドキュメント
 
 - ローカル開発の詳細: [docs/design/07-local-development.md](docs/design/07-local-development.md)

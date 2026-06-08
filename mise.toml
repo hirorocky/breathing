@@ -1,2 +1,6 @@
 [tools]
 node = "26.2.0"
+
+# wrangler CLI 用（.env.cloudflare.example をコピーして使う）
+[env]
+_.file = { path = ".env.cloudflare", redact = true }
