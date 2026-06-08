@@ -3,7 +3,7 @@
 ## 初回セットアップ
 
 ```bash
-cp .env.example .env.local   # NEXT_PUBLIC_ONLINE=1 を確認
+cp .env.local.example .env.local   # NEXT_PUBLIC_ONLINE=1 を確認
 npm install
 cd worker && npm install && npm run db:migrate:local && cd ..
 ```
