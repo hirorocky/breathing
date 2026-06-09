@@ -15,6 +15,17 @@
   --bx: 1;
   --by: 1;
   --bo: 0.5;
+
+  /* 呼吸円 — max / vmin / モバイルの 3 段階 */
+  --breath-size-max: 460px;
+  --breath-size-vmin: 50vmin;
+  --breath-size-mobile: 212px;
+
+  /* 下部 UI — 縦並び: フォーム → ? */
+  --footer-inset: 24px;
+  --help-size: 32px;
+  --footer-gap: 26px;
+  --breath-center-bias: 4vh;
 }
 
 * {
@@ -69,12 +80,13 @@ body::after {
   z-index: 2;
   display: grid;
   place-items: center;
+  padding-bottom: var(--breath-center-bias);
 }
 
 .breath {
   position: relative;
-  width: min(620px, 72vmin);
-  height: min(620px, 72vmin);
+  width: min(var(--breath-size-max), var(--breath-size-vmin));
+  height: min(var(--breath-size-max), var(--breath-size-vmin));
   padding: 0;
   border: none;
   background: none;
@@ -444,8 +456,8 @@ body::after {
 
 .help-toggle {
   position: fixed;
-  bottom: 28px;
-  left: 28px;
+  bottom: var(--footer-inset);
+  left: var(--footer-inset);
   z-index: 100;
   appearance: none;
   background: oklch(from var(--bg-deep) l c h / 0.5);
@@ -453,8 +465,8 @@ body::after {
   backdrop-filter: blur(8px);
   border: 0.5px solid var(--ink-mute);
   color: var(--ink-mute);
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   font-family: var(--mono);
   font-size: 14px;
@@ -658,25 +670,23 @@ a.privacy-contact:hover {
 .word-bar {
   position: fixed;
   left: 50%;
-  bottom: 60px;
-  transform: translateX(-50%) translateY(8px);
+  bottom: calc(var(--footer-inset) + var(--help-size) + var(--footer-gap));
+  transform: translateX(-50%);
   z-index: 35;
   width: min(560px, calc(100vw - 80px));
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 0.7s ease,
-    transform 0.7s ease;
-}
-
-.word-bar.open {
   opacity: 1;
   pointer-events: auto;
-  transform: translateX(-50%) translateY(0);
+}
+
+.word-bar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 .word-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   background: transparent;
   border: 0;
   border-bottom: 0.5px solid var(--ink-faint);
@@ -696,17 +706,41 @@ a.privacy-contact:hover {
   border-color: var(--ember-soft);
 }
 
-.word-hint {
-  margin-top: 10px;
-  text-align: center;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.22em;
+.word-submit {
+  flex-shrink: 0;
+  appearance: none;
+  margin: 0 0 8px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
   color: var(--ink-faint);
+  cursor: pointer;
+  opacity: 0.7;
+  animation: word-submit-in 0.35s ease;
+  transition: color 0.5s ease;
 }
 
-.word-hint .esc {
-  opacity: 0.6;
+.word-submit:hover,
+.word-submit:focus-visible {
+  color: var(--ink-mute);
+  opacity: 1;
+  outline: none;
+}
+
+@keyframes word-submit-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+
+  to {
+    opacity: 0.7;
+    transform: translateY(0);
+  }
+}
+
+.word-submit-icon {
+  display: block;
 }
 
 ::selection {
@@ -1072,9 +1106,19 @@ a.privacy-contact:hover {
 }
 
 @media (max-width: 720px) {
+  :root {
+    --footer-inset: 20px;
+    --footer-gap: 20px;
+    --breath-center-bias: 3vh;
+  }
+
   .breath {
-    width: 280px;
-    height: 280px;
+    width: var(--breath-size-mobile);
+    height: var(--breath-size-mobile);
+  }
+
+  .word-bar {
+    width: calc(100vw - 64px);
   }
 
   .help-card {

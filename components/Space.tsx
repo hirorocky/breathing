@@ -9,7 +9,7 @@ import { HelpOverlay } from "@/components/HelpOverlay";
 import { Orbs } from "@/components/Orbs";
 import { RippleField } from "@/components/RippleField";
 import { SiteChrome } from "@/components/SiteChrome";
-import { WordBar } from "@/components/WordBar";
+import { WordBar, type WordBarHandle } from "@/components/WordBar";
 import { useBreathEngine } from "@/hooks/useBreathEngine";
 import { useDebugMode } from "@/hooks/useDebugMode";
 import { useInteractionState } from "@/hooks/useInteractionState";
@@ -24,15 +24,13 @@ function isTypingInInput(): boolean {
 }
 
 const INTERACTIVE_SELECTOR =
-  ".help-toggle, .help-overlay, .word-bar, .word-input, input, .event-debug, .orb";
+  ".help-toggle, .help-overlay, .word-bar, .word-input, .word-submit, input, .event-debug, .orb";
 
 /** 「深呼吸している場所」のメイン画面 */
 export function Space() {
   const [words, setWords] = useState<Array<{ id: string; text: string }>>([]);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [wordBarOpen, setWordBarOpen] = useState(false);
-  const [wordBarSession, setWordBarSession] = useState(0);
-  const [wordBarInitialChar, setWordBarInitialChar] = useState("");
+  const wordBarRef = useRef<WordBarHandle>(null);
   const [pointer, setPointer] = useState<{
     x: number;
     y: number;
@@ -86,17 +84,6 @@ export function Space() {
     instability: CONFIG.breathInstability,
   });
 
-  const closeWordBar = useCallback(() => {
-    setWordBarOpen(false);
-    setWordBarInitialChar("");
-  }, []);
-
-  const openWordBar = useCallback((char: string) => {
-    setWordBarInitialChar(char);
-    setWordBarSession((session) => session + 1);
-    setWordBarOpen(true);
-  }, []);
-
   useKeyboardShortcuts({
     onKeyDown: (event) => {
       if (
@@ -127,17 +114,12 @@ export function Space() {
         return;
       }
 
-      if (wordBarOpen || isTypingInInput()) return;
-
-      if (event.key === "Escape") {
-        closeWordBar();
-        return;
-      }
+      if (isTypingInInput()) return;
 
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key.length !== 1) return;
 
-      openWordBar(event.key);
+      wordBarRef.current?.appendChar(event.key);
       event.preventDefault();
     },
   });
@@ -342,13 +324,7 @@ export function Space() {
         />
       </main>
 
-      <WordBar
-        open={wordBarOpen}
-        sessionKey={wordBarSession}
-        initialChar={wordBarInitialChar}
-        onClose={closeWordBar}
-        onPlace={handlePlaceWord}
-      />
+      <WordBar ref={wordBarRef} onPlace={handlePlaceWord} />
 
       <button
         type="button"
