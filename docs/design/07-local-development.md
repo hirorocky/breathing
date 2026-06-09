@@ -14,10 +14,10 @@ cd worker && npm install && npm run db:migrate:local && cd ..
 npm run dev:all   # Next :3000 + Worker :8787
 ```
 
-- `npm run dev` 単体では `/api` に届かない
+- `npm run dev` 単体では Worker API に届かない
 - Worker だけ: `npm run dev:worker`
 
-開発時、Next は `/api/*` を `WORKER_DEV_ORIGIN`（既定 `http://localhost:8787`）へ rewrite する。
+開発時は `NEXT_PUBLIC_API_BASE` 未設定でも、フロントが既定で `http://localhost:8787` の Worker API を呼ぶ。
 
 ## ビルド確認
 

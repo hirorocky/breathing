@@ -28,6 +28,27 @@ export function parseAllowedOrigins(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function isLocalhost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+export function isLocalDevRequest(request: Request): boolean {
+  try {
+    return isLocalhost(new URL(request.url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return isLocalhost(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function isValidSessionId(id: string): boolean {
   return UUID_RE.test(id);
 }
@@ -49,6 +70,7 @@ export function isOriginAllowed(
 
   const origin = request.headers.get("Origin");
   if (origin) {
+    if (isLocalDevRequest(request) && isLocalDevOrigin(origin)) return true;
     return allowed.includes(origin);
   }
 
@@ -56,6 +78,9 @@ export function isOriginAllowed(
   if (referer) {
     try {
       const refOrigin = new URL(referer).origin;
+      if (isLocalDevRequest(request) && isLocalDevOrigin(refOrigin)) {
+        return true;
+      }
       return allowed.includes(refOrigin);
     } catch {
       return false;

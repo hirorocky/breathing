@@ -12,7 +12,7 @@
 | `lib/constants.ts` | `ONLINE` 設定 |
 | `lib/time.ts` | `Temporal.Now` ベースの時刻ヘルパー |
 | `lib/orbPresence.ts` | presence → orb 目標値 |
-| `next.config.ts` | static export、dev rewrite |
+| `next.config.ts` | static export 設定 |
 | `public/_routes.json` | `/api/*` を Worker へ |
 
 ## Worker

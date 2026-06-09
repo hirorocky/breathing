@@ -43,6 +43,10 @@ export const PENDING_WORDS_MAX = 8;
 export const PRIVACY_CONTACT =
   process.env.NEXT_PUBLIC_PRIVACY_CONTACT?.trim() || "";
 
+const DEFAULT_API_BASE =
+  process.env.NODE_ENV === "development" ? "http://localhost:8787" : "";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.trim() || DEFAULT_API_BASE;
+
 /** オンライン API（NEXT_PUBLIC_ONLINE=1 のときのみ有効） */
 export const ONLINE = {
   enabled: process.env.NEXT_PUBLIC_ONLINE === "1",
@@ -50,8 +54,8 @@ export const ONLINE = {
   orbLinkEnabled:
     process.env.NEXT_PUBLIC_ONLINE === "1" &&
     process.env.NEXT_PUBLIC_ORB_LINK !== "0",
-  /** 本番同一オリジン・ローカル dev（rewrite）では空でよい */
-  apiBase: process.env.NEXT_PUBLIC_API_BASE ?? "",
+  /** 本番同一オリジンでは空。dev は Worker dev origin を既定にする */
+  apiBase: API_BASE,
   /** GET /api/presence の polling 間隔（ms） */
   presencePollMs: Number(process.env.NEXT_PUBLIC_PRESENCE_POLL_MS) || 60_000,
   /** orb 数が 1 ステップ変わるまでの ms */

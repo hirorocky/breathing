@@ -5,7 +5,11 @@ import { logger } from "hono/logger";
 import { adminRoutes } from "./routes/admin";
 import { publicRoutes } from "./routes/public";
 import { runVisitMaintenance } from "./scheduled";
-import { parseAllowedOrigins } from "./security";
+import {
+  isLocalDevOrigin,
+  isLocalDevRequest,
+  parseAllowedOrigins,
+} from "./security";
 import type { AppEnv, Env } from "./types";
 
 const app = new Hono<AppEnv>();
@@ -16,6 +20,9 @@ app.use(
   cors({
     origin: (origin, c) => {
       const allowed = parseAllowedOrigins(c.env.ALLOWED_ORIGINS);
+      if (origin && isLocalDevRequest(c.req.raw) && isLocalDevOrigin(origin)) {
+        return origin;
+      }
       if (allowed.length === 0) return origin ?? "*";
       return origin && allowed.includes(origin) ? origin : "";
     },

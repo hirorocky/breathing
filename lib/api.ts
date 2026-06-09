@@ -1,9 +1,20 @@
 import type { ApiMode, PresenceResponse } from "@/lib/constants";
 
 const STATIC_ONLY_HEADER = "static-only";
+const LOCAL_WORKER_ORIGIN = "http://localhost:8787";
+
+function localDevApiBase(base: string): string {
+  if (base) return base;
+  if (typeof window === "undefined") return base;
+
+  const { hostname } = window.location;
+  return hostname === "localhost" || hostname === "127.0.0.1"
+    ? LOCAL_WORKER_ORIGIN
+    : base;
+}
 
 function apiUrl(base: string, path: string): string {
-  const normalized = base.replace(/\/$/, "");
+  const normalized = localDevApiBase(base).replace(/\/$/, "");
   return normalized ? `${normalized}${path}` : path;
 }
 

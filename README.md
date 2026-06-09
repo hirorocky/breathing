@@ -38,7 +38,7 @@ npm run dev:all
 | フロント（Next.js） | http://localhost:3000 |
 | API（Worker） | http://localhost:8787 |
 
-開発中、Next.js は `/api/*` を `WORKER_DEV_ORIGIN`（既定 `http://localhost:8787`）へプロキシします。`npm run dev` だけでは API に届きません。
+開発中は `NEXT_PUBLIC_API_BASE` 未設定でも、フロントが既定で `http://localhost:8787` の Worker API を呼びます。`npm run dev` だけでは API に届きません。
 
 Worker だけ起動する場合:
 
