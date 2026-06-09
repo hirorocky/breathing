@@ -60,7 +60,6 @@ export const WordBar = forwardRef<WordBarHandle, Props>(function WordBar(
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={handleInputKeyDown}
-          placeholder="ことばにする"
           spellCheck={false}
           aria-label="ことばを入力"
         />
