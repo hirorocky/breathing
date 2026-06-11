@@ -5,23 +5,29 @@ import { EventDebugPanel } from "@/components/events/EventDebugPanel";
 import { EventLayer } from "@/components/events/EventLayer";
 import { BreathForm } from "@/components/BreathForm";
 import { HelpOverlay } from "@/components/HelpOverlay";
+import { FloatingLeaves } from "@/components/FloatingLeaves";
 import { Orbs } from "@/components/Orbs";
+import { StarField } from "@/components/StarField";
 import { RippleField } from "@/components/RippleField";
 import { SiteChrome } from "@/components/SiteChrome";
+import { TimeSeekBar } from "@/components/TimeSeekBar";
 import { useBreathEngine } from "@/hooks/useBreathEngine";
+import { useDayCycle } from "@/hooks/useDayCycle";
 import { useDebugMode } from "@/hooks/useDebugMode";
 import { useInteractionState } from "@/hooks/useInteractionState";
 import { useAnimationFrame } from "@/hooks/useAnimationFrame";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useRandomEvents } from "@/hooks/useRandomEvents";
 import { CONFIG } from "@/lib/constants";
+import { phaseOffsetFromTarget } from "@/lib/dayCycle";
 
 const INTERACTIVE_SELECTOR =
-  ".help-toggle, .help-overlay, .event-debug, .orb";
+  ".help-toggle, .help-overlay, .event-debug, .time-seek-bar, .orb";
 
 /** 「深呼吸している場所」のメイン画面 */
 export function Space() {
   const [helpOpen, setHelpOpen] = useState(false);
+  const [phaseOffset, setPhaseOffset] = useState<number | null>(null);
   const [pointer, setPointer] = useState<{
     x: number;
     y: number;
@@ -52,9 +58,20 @@ export function Space() {
 
   const { debug, toggleDebug } = useDebugMode();
 
+  const {
+    syncPhase,
+    effectivePhase,
+    serviceTimeLabel,
+    phaseLabel,
+    isManual,
+    nightAmbience,
+    leafAmbience,
+  } = useDayCycle({ debug, phaseOffset });
+
   const { activeEvent, completeEvent, nextFireAt } = useRandomEvents({
     enabled: !helpOpen,
     debug,
+    phase: effectivePhase,
   });
 
   const {
@@ -67,6 +84,7 @@ export function Space() {
 
   useBreathEngine({
     cycleSeconds: CONFIG.breathCycleSeconds,
+    inhaleRatio: CONFIG.breathInhaleRatio,
     instability: CONFIG.breathInstability,
   });
 
@@ -279,7 +297,13 @@ export function Space() {
         </filter>
       </svg>
       <SiteChrome />
-      <Orbs count={CONFIG.orbCount} sessionSeed={sessionSeed} />
+      <StarField sessionSeed={sessionSeed} ambience={nightAmbience} />
+      <FloatingLeaves sessionSeed={sessionSeed} ambience={leafAmbience} />
+      <Orbs
+        count={CONFIG.orbCount}
+        sessionSeed={sessionSeed}
+        ambience={nightAmbience}
+      />
       <RippleField ripples={ripples} pointer={pointer} />
       <EventLayer activeEvent={activeEvent} onComplete={completeEvent} />
 
@@ -302,11 +326,23 @@ export function Space() {
 
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
 
+      <TimeSeekBar
+        phase={effectivePhase}
+        onPhaseChange={(phase) =>
+          setPhaseOffset(phaseOffsetFromTarget(syncPhase, phase))
+        }
+      />
+
       {debug && (
         <EventDebugPanel
           activeEvent={activeEvent}
           nextFireAt={nextFireAt}
           paused={helpOpen}
+          syncPhase={syncPhase}
+          effectivePhase={effectivePhase}
+          serviceTimeLabel={serviceTimeLabel}
+          phaseLabel={phaseLabel}
+          isManual={isManual}
         />
       )}
     </div>

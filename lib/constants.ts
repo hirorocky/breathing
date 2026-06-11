@@ -2,10 +2,12 @@ export const APP_TITLE = "深呼吸している場所";
 
 /** 空間の基本設定 */
 export const CONFIG = {
-  /** 呼吸 1 サイクルの秒数 */
-  breathCycleSeconds: 8,
+  /** 呼吸 1 サイクルの秒数（6 回/分） */
+  breathCycleSeconds: 10,
+  /** 吸気が占める割合（残りが呼気）。0.4 = 4 秒吸・6 秒吐 */
+  breathInhaleRatio: 0.4,
   /** 呼吸の揺らぎ（0 = 規則的、1 以上 = より生っぽい） */
-  breathInstability: 0.6,
+  breathInstability: 0.5,
   /** 画面周辺に漂う気配の点の数 */
   orbCount: 5,
 } as const;

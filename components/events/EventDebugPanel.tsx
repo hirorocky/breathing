@@ -9,6 +9,11 @@ type Props = {
   activeEvent: ActiveEvent | null;
   nextFireAt: number | null;
   paused: boolean;
+  syncPhase: number;
+  effectivePhase: number;
+  serviceTimeLabel: string;
+  phaseLabel: string;
+  isManual: boolean;
 };
 
 function getRemainingSeconds(nextFireAt: number | null): number | null {
@@ -29,7 +34,16 @@ function useRemainingSeconds(nextFireAt: number | null): number | null {
 }
 
 /** デバッグ ON 時だけ、イベントの状態を表示する */
-export function EventDebugPanel({ activeEvent, nextFireAt, paused }: Props) {
+export function EventDebugPanel({
+  activeEvent,
+  nextFireAt,
+  paused,
+  syncPhase,
+  effectivePhase,
+  serviceTimeLabel,
+  phaseLabel,
+  isManual,
+}: Props) {
   const remaining = useRemainingSeconds(paused ? null : nextFireAt);
 
   const status = paused
@@ -58,6 +72,25 @@ export function EventDebugPanel({ activeEvent, nextFireAt, paused }: Props) {
         </span>
       </div>
       <dl className="event-debug-body">
+        <div className="event-debug-row">
+          <dt>time</dt>
+          <dd>
+            {serviceTimeLabel}
+            {isManual ? " (manual)" : ""}
+          </dd>
+        </div>
+        <div className="event-debug-row">
+          <dt>phase</dt>
+          <dd>
+            {phaseLabel} {effectivePhase.toFixed(3)}
+          </dd>
+        </div>
+        {isManual && (
+          <div className="event-debug-row">
+            <dt>sync</dt>
+            <dd>{syncPhase.toFixed(3)}</dd>
+          </div>
+        )}
         <div className="event-debug-row">
           <dt>event</dt>
           <dd>{eventLabel}</dd>

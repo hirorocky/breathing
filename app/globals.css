@@ -1,12 +1,13 @@
 :root {
-  --bg-deep: oklch(0.16 0.006 60);
-  --bg-mid: oklch(0.2 0.008 60);
-  --bg-soft: oklch(0.24 0.01 60);
-  --ink: oklch(0.86 0.006 70);
-  --ink-mute: oklch(0.78 0.012 70);
-  --ink-faint: oklch(0.68 0.012 70);
-  --ember: oklch(0.72 0.04 50);
-  --ember-soft: oklch(0.55 0.03 50);
+  /* useDayCycle が 1 秒ごとに更新する（初期値は夜の池・星空） */
+  --bg-deep: oklch(0.11 0.04 268);
+  --bg-mid: oklch(0.15 0.045 272);
+  --bg-soft: oklch(0.19 0.038 278);
+  --ink: oklch(0.84 0.025 250);
+  --ink-mute: oklch(0.72 0.032 265);
+  --ink-faint: oklch(0.58 0.028 270);
+  --ember: oklch(0.82 0.07 95);
+  --ember-soft: oklch(0.62 0.048 268);
 
   --serif: var(--font-serif), "Hiragino Mincho ProN", "Yu Mincho", serif;
   --mono: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -52,9 +53,10 @@ body::before {
   position: fixed;
   inset: 0;
   background:
-    radial-gradient(ellipse 70% 50% at 50% 50%, var(--bg-soft) 0%, transparent 70%),
-    radial-gradient(ellipse 60% 40% at 30% 80%, var(--bg-mid) 0%, transparent 65%);
-  opacity: calc(0.32 + var(--bo) * 0.25);
+    radial-gradient(ellipse 78% 32% at 50% 36%, var(--bg-soft) 0%, transparent 74%),
+    radial-gradient(ellipse 90% 42% at 50% 88%, var(--bg-mid) 0%, transparent 62%),
+    linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-mid) 52%, var(--bg-deep) 100%);
+  opacity: calc(0.38 + var(--bo) * 0.28);
   pointer-events: none;
   z-index: 0;
   transform: scale(calc(1 + var(--bo) * 0.04));
@@ -191,6 +193,95 @@ body::after {
 @media (pointer: fine) {
   .orb {
     pointer-events: auto;
+  }
+}
+
+/* 夜の星空 */
+.starfield {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity 2.4s ease;
+}
+
+.star {
+  position: absolute;
+  border-radius: 50%;
+  background: oklch(0.9 0.03 250);
+  box-shadow: 0 0 6px oklch(0.82 0.04 265 / 0.55);
+  transform: translate(-50%, -50%) scale(var(--s, 1));
+  opacity: var(--o, 0.5);
+  will-change: transform, opacity;
+}
+
+.star.you {
+  background: var(--ember);
+  box-shadow:
+    0 0 8px var(--ember-soft),
+    0 0 16px oklch(0.82 0.06 95 / 0.45);
+}
+
+/* 昼の水面に浮かぶ葉 */
+.floating-leaves {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  transition: opacity 2.4s ease;
+}
+
+.floating-leaf {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  animation: floatingLeafDrift var(--leaf-drift-duration, 60s) linear infinite;
+  animation-delay: var(--leaf-delay, 0s);
+  opacity: var(--leaf-opacity, 0.6);
+}
+
+.floating-leaf-bob {
+  display: block;
+  animation: floatingLeafBob var(--leaf-bob-duration, 9s) ease-in-out infinite;
+  animation-delay: var(--leaf-delay, 0s);
+}
+
+.floating-leaf-shape {
+  display: block;
+  width: calc(11px * var(--leaf-scale, 1));
+  height: calc(7px * var(--leaf-scale, 1));
+  border-radius: 80% 20% 80% 20%;
+  background: linear-gradient(
+    135deg,
+    oklch(0.62 0.09 145 / 0.72) 0%,
+    oklch(0.52 0.08 132 / 0.58) 100%
+  );
+  box-shadow: 0 0 4px oklch(0.58 0.07 140 / 0.25);
+  transform: rotate(var(--leaf-spin, 0deg)) scaleY(0.72);
+  filter: blur(0.2px);
+}
+
+@keyframes floatingLeafDrift {
+  0% {
+    translate: -4vw 0;
+  }
+
+  50% {
+    translate: 5vw -0.6vh;
+  }
+
+  100% {
+    translate: -4vw 0.4vh;
+  }
+}
+
+@keyframes floatingLeafBob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+
+  50% {
+    translate: 0 -0.35vh;
   }
 }
 
@@ -446,6 +537,68 @@ body::after {
   color: var(--bg-deep);
   background: var(--ember-soft);
   border-color: var(--ember-soft);
+}
+
+/* ── time seek bar ─────────────────────────────────────────────────── */
+
+.time-seek-bar {
+  position: fixed;
+  left: calc(var(--footer-inset) + 44px);
+  right: var(--footer-inset);
+  bottom: var(--footer-inset);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.time-seek-time {
+  flex: 0 0 auto;
+  min-width: 2.8em;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.time-seek-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  cursor: default;
+  touch-action: none;
+}
+
+.time-seek-rail {
+  width: 100%;
+  height: 1px;
+  background: var(--ink-faint);
+  opacity: 0.45;
+  border-radius: 1px;
+}
+
+.time-seek-indicator {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: var(--ember-soft);
+  border: 0.5px solid var(--ink-mute);
+  transform: translateY(-50%);
+  transition: left 1s linear;
+  pointer-events: none;
+}
+
+.time-seek-track:active .time-seek-indicator {
+  transition: none;
 }
 
 .help-overlay {
@@ -765,179 +918,6 @@ a.privacy-contact:hover {
   100% {
     opacity: 0;
     transform: translateX(55vw);
-  }
-}
-
-/* 横風 — wash がごく弱く流れ、葉が舞う */
-.wind-drift-event {
-  --wind-dir: 1;
-  --wind-strength: 0.7;
-}
-
-.wind-drift-layer {
-  position: absolute;
-  inset: -8%;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    oklch(0.82 0.04 70 / 0.12) 28%,
-    oklch(0.88 0.05 75 / 0.22) 50%,
-    oklch(0.82 0.04 70 / 0.12) 72%,
-    transparent 100%
-  );
-  opacity: 0;
-  filter: blur(1px);
-  animation: windDrift 4.2s ease-in-out forwards;
-}
-
-@keyframes windDrift {
-  0% {
-    opacity: 0;
-    transform: translateX(calc(var(--wind-dir, 1) * -18vw));
-  }
-
-  15% {
-    opacity: calc(0.75 * var(--wind-strength, 0.7));
-  }
-
-  80% {
-    opacity: calc(0.5 * var(--wind-strength, 0.7));
-  }
-
-  100% {
-    opacity: 0;
-    transform: translateX(calc(var(--wind-dir, 1) * 18vw));
-  }
-}
-
-.wind-leaves {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.wind-leaf {
-  position: absolute;
-  display: block;
-  pointer-events: none;
-}
-
-.wind-leaf-motion,
-.wind-leaf-fall,
-.wind-leaf-sway {
-  display: block;
-}
-
-.wind-leaf-motion {
-  opacity: 0;
-  animation:
-    windLeafDriftX var(--leaf-duration, 3.2s) linear forwards,
-    windLeafFade var(--leaf-duration, 3.2s) ease-in-out forwards;
-  animation-delay: var(--leaf-delay, 0s);
-}
-
-.wind-leaf-fall {
-  animation: windLeafFallY var(--leaf-duration, 3.2s) cubic-bezier(0.22, 0.55, 0.28, 1)
-    forwards;
-  animation-delay: var(--leaf-delay, 0s);
-}
-
-.wind-leaf-sway {
-  animation: windLeafSway var(--leaf-sway-duration, 1.4s) ease-in-out infinite;
-  animation-delay: var(--leaf-delay, 0s);
-}
-
-.wind-leaf-shape {
-  display: block;
-  width: calc(9px * var(--leaf-scale, 1));
-  height: calc(13px * var(--leaf-scale, 1));
-  margin: calc(-6.5px * var(--leaf-scale, 1)) 0 0 calc(-4.5px * var(--leaf-scale, 1));
-  border-radius: 2px 80% 2px 80%;
-  background: linear-gradient(
-    145deg,
-    oklch(0.84 0.1 135 / 0.72) 0%,
-    oklch(0.72 0.08 130 / 0.58) 100%
-  );
-  box-shadow: 0 0 5px oklch(0.78 0.08 135 / 0.22);
-  transform: rotate(var(--leaf-spin, 0deg));
-  animation: windLeafTumble var(--leaf-duration, 3.2s) ease-in-out forwards;
-  animation-delay: var(--leaf-delay, 0s);
-}
-
-@keyframes windLeafDriftX {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-
-  to {
-    transform: translate3d(
-      calc(var(--wind-dir, 1) * var(--leaf-wind-x, 1) * 44vw),
-      0,
-      0
-    );
-  }
-}
-
-@keyframes windLeafFallY {
-  0% {
-    transform: translate3d(0, 0, 0);
-  }
-
-  18% {
-    transform: translate3d(0, calc(var(--leaf-flutter, 10px) * -0.9), 0);
-  }
-
-  100% {
-    transform: translate3d(0, var(--leaf-gravity, 12vh), 0);
-  }
-}
-
-@keyframes windLeafSway {
-  0%,
-  100% {
-    transform: translate3d(
-      calc(var(--leaf-wobble, 8px) * var(--wind-dir, 1) * -0.35),
-      calc(var(--leaf-flutter, 10px) * 0.08),
-      0
-    );
-  }
-
-  50% {
-    transform: translate3d(
-      calc(var(--leaf-wobble, 8px) * var(--wind-dir, 1) * 0.35),
-      calc(var(--leaf-flutter, 10px) * -0.22),
-      0
-    );
-  }
-}
-
-@keyframes windLeafTumble {
-  from {
-    transform: rotate(var(--leaf-spin, 0deg));
-  }
-
-  to {
-    transform: rotate(
-      calc(var(--leaf-spin, 0deg) + 300deg * var(--leaf-tumble-rate, 1))
-    );
-  }
-}
-
-@keyframes windLeafFade {
-  0% {
-    opacity: 0;
-  }
-
-  10% {
-    opacity: calc(0.58 * var(--wind-strength, 0.7) * var(--leaf-opacity, 1));
-  }
-
-  78% {
-    opacity: calc(0.38 * var(--wind-strength, 0.7) * var(--leaf-opacity, 1));
-  }
-
-  100% {
-    opacity: 0;
   }
 }
 

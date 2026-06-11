@@ -1,6 +1,6 @@
 import { BreathWaveEvent } from "./BreathWaveEvent";
 import { ShootingStarEvent } from "./ShootingStarEvent";
-import { WindDriftEvent } from "./WindDriftEvent";
+import { isNightPhase } from "@/lib/dayCycle";
 import type { EventDefinition, EventType } from "@/lib/events/types";
 
 /** ここにイベントを追加していく */
@@ -11,13 +11,6 @@ export const EVENT_REGISTRY: EventDefinition[] = [
     weight: 1,
     durationMs: 3_200,
     Component: ShootingStarEvent,
-  },
-  {
-    type: "wind-drift",
-    label: "風",
-    weight: 0.85,
-    durationMs: 4_200,
-    Component: WindDriftEvent,
   },
   {
     type: "breath-wave",
@@ -38,15 +31,25 @@ export function getEventDefinition(type: EventType): EventDefinition {
   return def;
 }
 
-/** weight に応じて 1 つ選ぶ */
-export function pickRandomEventType(): EventType {
-  const total = EVENT_REGISTRY.reduce((sum, def) => sum + def.weight, 0);
+export function isEventAllowed(type: EventType, phase: number): boolean {
+  if (type === "shooting-star") return isNightPhase(phase);
+  return true;
+}
+
+/** weight に応じて 1 つ選ぶ（時間帯で候補を絞る） */
+export function pickRandomEventType(phase: number): EventType {
+  const candidates = EVENT_REGISTRY.filter((def) =>
+    isEventAllowed(def.type, phase),
+  );
+  const pool = candidates.length > 0 ? candidates : EVENT_REGISTRY;
+
+  const total = pool.reduce((sum, def) => sum + def.weight, 0);
   let roll = Math.random() * total;
 
-  for (const def of EVENT_REGISTRY) {
+  for (const def of pool) {
     roll -= def.weight;
     if (roll <= 0) return def.type;
   }
 
-  return EVENT_REGISTRY[EVENT_REGISTRY.length - 1].type;
+  return pool[pool.length - 1].type;
 }

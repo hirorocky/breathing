@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 
 /** 登録可能なイベントの種類 */
-export type EventType = "shooting-star" | "wind-drift" | "breath-wave";
+export type EventType = "shooting-star" | "breath-wave";
 
 /** スケジューラが起動した 1 回分のインスタンス */
 export type ActiveEvent = {

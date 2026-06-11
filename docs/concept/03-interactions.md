@@ -16,18 +16,22 @@
 
 ## 層構造
 
-### Layer 0 — 呼吸（常時）
+### Layer 0 — 呼吸と時間（常時）
 
 - `useBreathEngine` が `--bx` / `--by` / `--bo` を更新
-- 対象: 背景 wash、中心の形、chrome の dot
-- 周期: 8s 基準 + instability 0.6。ユーザー操作では変えない
+- `useDayCycle` が `--bg-*` / `--ink-*` / `--ember-*` を更新
+- 対象: 背景 wash、中心の形、chrome の dot、画面全体の色調
+- 呼吸周期: 10s（6 回/分）、吸 4s / 吐 6s + instability 0.5。ユーザー操作では変えない
+- 時間サイクル: 実時間 12 分で 0:00→24:00→0:00（`?debug=1` 時は 60 秒）。全員同期。シークバーでそのタブだけ上書き可能
 
 ### Layer 1 — 受動（気配と痕跡）
 
 | 要素 | 振る舞い |
 |---|---|
-| orb | rAF で点滅。固定数（最後が you） |
-| ランダムイベント | 流れ星 / 風 / 波（本番: 45s 初回、以降 90〜300s） |
+| orb | rAF で点滅。固定数（最後が you）。夜は星に譲って薄くなる |
+| 星空 | 夜だけ。orb 同様の点が多数、水面に映る星 |
+| 浮葉 | 朝〜昼だけ。水面に静かに浮かぶ葉 |
+| ランダムイベント | 流れ星（夜）/ 波（常時。本番: 45s 初回、以降 90〜300s） |
 | 沈黙 | 何も起きなくて正しい |
 
 ### Layer 2 — 自発
@@ -35,6 +39,7 @@
 | 操作 | 入力 |
 |---|---|
 | 説明 | `?` または左下ボタン（開いている間イベント停止） |
+| 時間 | 下部シークバー（常時ドラッグ可。そのタブだけオフセット。ドラッグ後も実時間で進む。リロードで同期に戻る） |
 | debug | Cmd+Shift+D |
 
 verbose ヒントは help 開時のみ。
@@ -54,7 +59,8 @@ verbose ヒントは help 開時のみ。
 
 | 定数 | 場所 | 値 |
 |---|---|---|
-| 呼吸周期 | `lib/constants.ts` | 8s |
+| 呼吸周期 | `lib/constants.ts` | 10s（吸 4s / 吐 6s） |
+| 時間サイクル | `lib/dayCycle.ts` | 720s（debug: 60s） |
 | イベント（本番） | `lib/events/config.ts` | 45s / 90〜300s |
 | イベント（debug） | `lib/events/config.ts` | 1s / 1〜3s |
 | ripple debounce | `lib/interaction/constants.ts` | 2s |
@@ -82,6 +88,9 @@ verbose ヒントは help 開時のみ。
 | 定数 | `lib/interaction/constants.ts` |
 | 状態 | `hooks/useInteractionState.ts` |
 | オーケストレーション | `components/Space.tsx` |
+| 時間サイクル | `lib/dayCycle.ts`, `hooks/useDayCycle.ts` |
+| シークバー | `components/TimeSeekBar.tsx` |
 | 中心 | `components/BreathForm.tsx` |
 | ripple | `components/RippleField.tsx` |
 | orb | `components/Orbs.tsx` |
+| 星空 / 浮葉 | `components/StarField.tsx`, `components/FloatingLeaves.tsx` |

@@ -16,6 +16,8 @@ type OrbLayout = {
 type Props = {
   count: number;
   sessionSeed: number;
+  /** 0〜1。夜は星に譲って薄くする */
+  ambience?: number;
 };
 
 function seededFromSession(sessionSeed: number, index: number): number {
@@ -23,7 +25,7 @@ function seededFromSession(sessionSeed: number, index: number): number {
 }
 
 /** 画面周辺に漂う気配の点。最後の 1 つが you */
-export function Orbs({ count, sessionSeed }: Props) {
+export function Orbs({ count, sessionSeed, ambience = 1 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
@@ -83,8 +85,17 @@ export function Orbs({ count, sessionSeed }: Props) {
 
   useAnimationFrame(animate);
 
+  const orbAmbience = Math.max(0, Math.min(1, 1 - ambience));
+
+  if (orbAmbience <= 0.01) return null;
+
   return (
-    <div className="orbs" ref={containerRef} aria-hidden="true">
+    <div
+      className="orbs"
+      ref={containerRef}
+      style={{ opacity: orbAmbience }}
+      aria-hidden="true"
+    >
       {orbs.map((orb, i) => (
         <div
           key={i}

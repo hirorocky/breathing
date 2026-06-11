@@ -16,20 +16,28 @@ type Options = {
   enabled?: boolean;
   /** true のとき短いイベント間隔を使う */
   debug?: boolean;
+  /** サービス内時刻の phase（0〜1）。イベント種別の絞り込みに使う */
+  phase?: number;
 };
 
 /**
  * 静かにランダムイベントをスケジュールする。
  * 同時に 1 つだけ。終了後、ランダムな間隔で次を予約する。
  */
-export function useRandomEvents({ enabled = true, debug = false }: Options = {}) {
+export function useRandomEvents({
+  enabled = true,
+  debug = false,
+  phase = 0,
+}: Options = {}) {
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null);
   const [nextFireAt, setNextFireAt] = useState<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const enabledRef = useRef(enabled);
   const debugRef = useRef(debug);
+  const phaseRef = useRef(phase);
   enabledRef.current = enabled;
   debugRef.current = debug;
+  phaseRef.current = phase;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -54,7 +62,7 @@ export function useRandomEvents({ enabled = true, debug = false }: Options = {})
         setNextFireAt(null);
         setActiveEvent({
           instanceId: crypto.randomUUID(),
-          type: pickRandomEventType(),
+          type: pickRandomEventType(phaseRef.current),
           seed: Math.random(),
         });
       }, delayMs);
