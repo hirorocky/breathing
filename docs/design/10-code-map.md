@@ -4,14 +4,10 @@
 
 | ファイル | 役割 |
 |---|---|
-| `components/Space.tsx` | オーケストレーション、言葉のローカル追加 + 裏 POST |
-| `components/DriftField.tsx` | 漂う言葉の表示（ローカルのみ） |
-| `hooks/useOnlineSpace.ts` | presence polling、orbCount、再送キュー |
-| `hooks/useOrbCount.ts` | orb 数の緩やかな追従 |
-| `lib/api.ts` | `fetchPresence` / `submitWord` |
-| `lib/constants.ts` | `ONLINE` 設定 |
+| `components/Space.tsx` | オーケストレーション、呼吸・気配・イベントの配置 |
+| `components/Orbs.tsx` | 画面周辺の気配の点 |
+| `lib/constants.ts` | 呼吸・orb などの基本設定 |
 | `lib/time.ts` | `Temporal.Now` ベースの時刻ヘルパー |
-| `lib/orbPresence.ts` | presence → orb 目標値 |
 | `next.config.ts` | static export 設定 |
 | `public/_routes.json` | `/api/*` を Worker へ |
 
@@ -20,7 +16,7 @@
 | ファイル | 役割 |
 |---|---|
 | `worker/src/index.ts` | Hono アプリ（cors / logger / onError） |
-| `worker/src/routes/public.ts` | presence / words |
+| `worker/src/routes/public.ts` | presence / legacy words |
 | `worker/src/routes/admin.ts` | admin stats / words（bearer-auth） |
 | `worker/src/middleware/` | origin / IP スロットル / 予算ガード |
 | `worker/src/time.ts` | Temporal 時刻ヘルパー（polyfill 経由） |
@@ -35,5 +31,3 @@
 |---|---|
 | `.github/workflows/ci.yml` | lint / typecheck / build |
 | `.github/workflows/deploy-worker.yml` | migrate + deploy |
-
-`sessionSeed` 由来の演出は API 実数とは別。`apiMode === "online"` のときだけ人数が実数になる。

@@ -1,4 +1,4 @@
-/** 微反応・沈殿のタイミング定数 */
+/** 微反応のタイミング定数 */
 export const INTERACTION = {
   /** hover 反応の CSS transition */
   hoverDelayMs: 400,
@@ -14,9 +14,6 @@ export const INTERACTION = {
   touchBoostAmount: 0.08,
   /** hover 時 glow 加算 opacity */
   hoverGlowAmount: 0.05,
-  /** 言葉を置いたあと沈殿表示する時間 */
-  sedimentMinMs: 2_000,
-  sedimentMaxMs: 4_000,
   /** orb hover opacity 加算 */
   orbHoverBoost: 0.15,
   orbHoverDelayMs: 200,

@@ -23,39 +23,32 @@ npm install
 cd worker && npm install && npm run db:migrate:local && cd ..
 ```
 
-`.env.local` の `NEXT_PUBLIC_ONLINE=1` が有効なとき、人数の気配や言葉のサーバー保存などオンライン機能が動きます。未設定のときはオフライン同等です。
-
 ### 起動
 
-オンライン機能込みで開発するときは、フロントと Worker を同時に起動します。
-
 ```bash
-npm run dev:all
+npm run dev
 ```
 
-| サービス | URL |
-|---|---|
-| フロント（Next.js） | http://localhost:3000 |
-| API（Worker） | http://localhost:8787 |
+フロントは http://localhost:3000 で開きます。
 
-開発中は `NEXT_PUBLIC_API_BASE` 未設定でも、フロントが既定で `http://localhost:8787` の Worker API を呼びます。`npm run dev` だけでは API に届きません。
-
-Worker だけ起動する場合:
+Worker（admin API や D1 の確認用）だけ起動する場合:
 
 ```bash
 npm run dev:worker
 ```
 
-### オフライン同等で試す
+フロントと Worker を同時に起動する場合:
 
-`.env.local` から `NEXT_PUBLIC_ONLINE` を外すか、Worker を起動せず `npm run dev` のみで十分です。
+```bash
+npm run dev:all
+```
 
 ### ビルド確認
 
 ```bash
 npm run lint
 npm run typecheck:worker
-NEXT_PUBLIC_ONLINE=1 npm run build
+npm run build
 ```
 
 エラーなく `out/` が生成されれば OK です。

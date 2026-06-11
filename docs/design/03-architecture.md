@@ -6,8 +6,6 @@
 flowchart TB
   subgraph client [Browser]
     Space[Space.tsx]
-    Drift[DriftField]
-    WordBar[WordBar]
   end
 
   subgraph edge [Cloudflare]
@@ -17,15 +15,11 @@ flowchart TB
   end
 
   Space --> Pages
-  WordBar -->|POST /api/words| API
-  Space -->|local words| Drift
-  Space -->|GET /api/presence poll| API
   API --> D1
 ```
 
 - `/` は Pages が静的ファイル（`out/`）を配信
-- `/api/*` は Worker（`public/_routes.json` で Pages から除外）
-- 言葉はクライアント → サーバーへ一方向。画面はローカル state のみ
+- `/api/*` は Worker（`public/_routes.json` で Pages から除外）。利用者 UI からは呼ばない
 
 ## Cloudflare 製品の役割
 
@@ -33,18 +27,16 @@ flowchart TB
 |---|---|
 | Pages | 静的フロント（Next.js `output: 'export'`） |
 | Workers | API、バリデーション、レート制限、予算ガード |
-| D1 | 言葉・heartbeat・利用カウント |
+| D1 | heartbeat・visit・利用カウント |
 
 Durable Objects は使わない。Workers Free 枠内で始めやすい構成。
 
-## presence（polling）
+## presence API（実装者向け）
 
-- `GET /api/presence` で D1 `active_sessions` を upsert
-- 直近 `PRESENCE_WINDOW_SEC`（既定 300s）の件数を `count` として返す
-- クライアントは `NEXT_PUBLIC_PRESENCE_POLL_MS`（既定 60s）ごとに polling
+`GET /api/presence` は Worker に残る（admin / visit 観察用）。利用者 UI からは polling しない。
+
+- D1 `active_sessions` を upsert
 - 終了した visit は Cron（5 分間隔）で `session_visits` に確定（[11-session-visits.md](./11-session-visits.md)）
-
-即時性を上げないため WebSocket は使わない。
 
 ## 予算ガード
 
@@ -52,13 +44,13 @@ Durable Objects は使わない。Workers Free 枠内で始めやすい構成。
 
 | 項目 | 内容 |
 |---|---|
-| カウント対象 | `GET /api/presence`、`POST /api/words` |
+| カウント対象 | `GET /api/presence`（legacy: `POST /api/words`） |
 | カウントしない | admin API |
 | 既定上限 | 日次 90,000 / 月次 9,000,000 |
 | 手動停止 | `STATIC_ONLY_MODE=true` |
 | 静的配信 | Pages は継続 |
 
-クライアントは `static_only` 受信後、そのセッション中は polling・POST を止め、fallback に戻る。
+利用者 UI は API を呼ばないため、`static_only` の影響を受けない。
 
 ## 料金の目安
 

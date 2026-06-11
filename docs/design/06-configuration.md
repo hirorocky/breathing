@@ -4,11 +4,6 @@
 
 | 変数 | 例 | 意味 |
 |---|---|---|
-| `NEXT_PUBLIC_ONLINE` | `1` | オンライン API 有効。未設定ならオフライン |
-| `NEXT_PUBLIC_API_BASE` | `http://localhost:8787` | API origin。未設定時は dev で `http://localhost:8787`、本番で同一オリジン |
-| `NEXT_PUBLIC_PRESENCE_POLL_MS` | `60000` | `GET /api/presence` の polling 間隔（ms） |
-| `NEXT_PUBLIC_ORB_LINK` | `0` | `0` で orb 固定数。未設定なら連動 |
-| `NEXT_PUBLIC_ORB_STEP_MS` | `1200` | orb 数の変化速度 |
 | `NEXT_PUBLIC_PRIVACY_CONTACT` | `your@example.com` | `/privacy` の問い合わせ先 |
 
 テンプレート: `.env.local.example`

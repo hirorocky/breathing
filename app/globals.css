@@ -21,10 +21,8 @@
   --breath-size-vmin: 50vmin;
   --breath-size-mobile: 212px;
 
-  /* 下部 UI — 縦並び: フォーム → ? */
+  /* 下部 UI */
   --footer-inset: 24px;
-  --help-size: 32px;
-  --footer-gap: 26px;
   --breath-center-bias: 4vh;
 }
 
@@ -412,48 +410,6 @@ body::after {
   opacity: 1;
 }
 
-.chrome-right {
-  position: fixed;
-  top: 22px;
-  right: 24px;
-  z-index: 30;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: var(--ink-faint);
-  text-align: right;
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.presence-dots {
-  display: inline-flex;
-  gap: 5px;
-}
-
-.presence-dots .pd {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--ink-faint);
-  opacity: var(--o, 0.5);
-  transform: scale(var(--s, 1));
-}
-
-.presence-dots .pd.you {
-  background: var(--ember);
-}
-
-.chrome-right .label {
-  opacity: 0.72;
-  transition: opacity 1.4s ease;
-}
-
-.space[data-verbose] .chrome-right .label {
-  opacity: 0.92;
-}
-
 .help-toggle {
   position: fixed;
   bottom: var(--footer-inset);
@@ -665,82 +621,6 @@ a.privacy-contact:hover {
 
 .privacy-back {
   margin-top: 48px;
-}
-
-.word-bar {
-  position: fixed;
-  left: 50%;
-  bottom: calc(var(--footer-inset) + var(--help-size) + var(--footer-gap));
-  transform: translateX(-50%);
-  z-index: 35;
-  width: min(560px, calc(100vw - 80px));
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.word-bar-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-}
-
-.word-input {
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  border: 0;
-  border-bottom: 0.5px solid var(--ink-faint);
-  color: var(--ink);
-  font-family: var(--serif);
-  font-size: 18px;
-  line-height: 1.8;
-  letter-spacing: 0.08em;
-  padding: 6px 4px 10px;
-  outline: none;
-  text-align: center;
-  caret-color: var(--ember);
-  transition: border-color 1s ease;
-}
-
-.word-input:focus {
-  border-color: var(--ember-soft);
-}
-
-.word-submit {
-  flex-shrink: 0;
-  appearance: none;
-  margin: 0 0 8px;
-  padding: 4px;
-  border: 0;
-  background: transparent;
-  color: var(--ink-faint);
-  cursor: pointer;
-  opacity: 0.7;
-  animation: word-submit-in 0.35s ease;
-  transition: color 0.5s ease;
-}
-
-.word-submit:hover,
-.word-submit:focus-visible {
-  color: var(--ink-mute);
-  opacity: 1;
-  outline: none;
-}
-
-@keyframes word-submit-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-
-  to {
-    opacity: 0.7;
-    transform: translateY(0);
-  }
-}
-
-.word-submit-icon {
-  display: block;
 }
 
 ::selection {
@@ -1108,17 +988,12 @@ a.privacy-contact:hover {
 @media (max-width: 720px) {
   :root {
     --footer-inset: 20px;
-    --footer-gap: 20px;
     --breath-center-bias: 3vh;
   }
 
   .breath {
     width: var(--breath-size-mobile);
     height: var(--breath-size-mobile);
-  }
-
-  .word-bar {
-    width: calc(100vw - 64px);
   }
 
   .help-card {

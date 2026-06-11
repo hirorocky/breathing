@@ -4,33 +4,24 @@ import { useCallback, useRef, useState } from "react";
 import { EventDebugPanel } from "@/components/events/EventDebugPanel";
 import { EventLayer } from "@/components/events/EventLayer";
 import { BreathForm } from "@/components/BreathForm";
-import { DriftField } from "@/components/DriftField";
 import { HelpOverlay } from "@/components/HelpOverlay";
 import { Orbs } from "@/components/Orbs";
 import { RippleField } from "@/components/RippleField";
 import { SiteChrome } from "@/components/SiteChrome";
-import { WordBar, type WordBarHandle } from "@/components/WordBar";
 import { useBreathEngine } from "@/hooks/useBreathEngine";
 import { useDebugMode } from "@/hooks/useDebugMode";
 import { useInteractionState } from "@/hooks/useInteractionState";
 import { useAnimationFrame } from "@/hooks/useAnimationFrame";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { useOnlineSpace } from "@/hooks/useOnlineSpace";
 import { useRandomEvents } from "@/hooks/useRandomEvents";
 import { CONFIG } from "@/lib/constants";
 
-function isTypingInInput(): boolean {
-  return document.activeElement?.tagName === "INPUT";
-}
-
 const INTERACTIVE_SELECTOR =
-  ".help-toggle, .help-overlay, .word-bar, .word-input, .word-submit, input, .event-debug, .orb";
+  ".help-toggle, .help-overlay, .event-debug, .orb";
 
 /** 「深呼吸している場所」のメイン画面 */
 export function Space() {
-  const [words, setWords] = useState<Array<{ id: string; text: string }>>([]);
   const [helpOpen, setHelpOpen] = useState(false);
-  const wordBarRef = useRef<WordBarHandle>(null);
   const [pointer, setPointer] = useState<{
     x: number;
     y: number;
@@ -74,11 +65,6 @@ export function Space() {
     triggerBreathClick,
   } = useInteractionState();
 
-  const { presenceCount, orbCount, sendWord } = useOnlineSpace({
-    sessionSeed,
-    enabled: !helpOpen,
-  });
-
   useBreathEngine({
     cycleSeconds: CONFIG.breathCycleSeconds,
     instability: CONFIG.breathInstability,
@@ -100,7 +86,6 @@ export function Space() {
         event.key === "?" || (event.shiftKey && event.key === "/");
 
       if (isHelpShortcut) {
-        if (isTypingInInput()) return;
         setHelpOpen((open) => !open);
         event.preventDefault();
         return;
@@ -113,25 +98,8 @@ export function Space() {
         }
         return;
       }
-
-      if (isTypingInInput()) return;
-
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key.length !== 1) return;
-
-      wordBarRef.current?.appendChar(event.key);
-      event.preventDefault();
     },
   });
-
-  const handlePlaceWord = useCallback(
-    (word: string) => {
-      const item = { id: crypto.randomUUID(), text: word };
-      setWords((current) => [item, ...current].slice(0, CONFIG.maxStoredWords));
-      void sendWord(word);
-    },
-    [sendWord],
-  );
 
   const handleSpacePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -310,10 +278,9 @@ export function Space() {
           </feMerge>
         </filter>
       </svg>
-      <SiteChrome presenceCount={presenceCount} />
-      <Orbs count={orbCount} sessionSeed={sessionSeed} />
+      <SiteChrome />
+      <Orbs count={CONFIG.orbCount} sessionSeed={sessionSeed} />
       <RippleField ripples={ripples} pointer={pointer} />
-      <DriftField words={words} />
       <EventLayer activeEvent={activeEvent} onComplete={completeEvent} />
 
       <main className="stage">
@@ -323,8 +290,6 @@ export function Space() {
           onBreathClick={triggerBreathClick}
         />
       </main>
-
-      <WordBar ref={wordBarRef} onPlace={handlePlaceWord} />
 
       <button
         type="button"
