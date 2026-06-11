@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { formatServiceTime, phaseToServiceMinutes } from "@/lib/dayCycle";
+import { phaseToServiceMinutes } from "@/lib/dayCycle";
 
 type Props = {
   phase: number;
@@ -83,9 +83,6 @@ export function TimeSeekBar({ phase, onPhaseChange }: Props) {
         <div className="time-seek-rail" />
         <div className="time-seek-indicator" style={{ left: indicatorLeft }} />
       </div>
-      <time className="time-seek-time" dateTime={formatServiceTime(phase)}>
-        {formatServiceTime(phase)}
-      </time>
     </div>
   );
 }

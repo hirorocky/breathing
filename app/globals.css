@@ -111,8 +111,8 @@ body::after {
   inset: 0;
   border-radius: 50%;
   border: 0.5px solid var(--ink-mute);
-  opacity: calc(0.3 + var(--bo) * 0.5);
-  transform: scale(calc(0.9 + var(--bo) * 0.1 + var(--touch-boost, 0)));
+  opacity: calc(0.3 + var(--bo) * 0.58);
+  transform: scale(calc(0.74 + var(--bo) * 0.26 + var(--touch-boost, 0)));
   transition: transform 0.6s ease;
   will-change: transform, opacity;
 }
@@ -143,7 +143,7 @@ body::after {
 
 .breath:active .ring {
   opacity: calc(0.34 + var(--bo) * 0.55);
-  transform: scale(calc(0.905 + var(--bo) * 0.105 + var(--touch-boost, 0)));
+  transform: scale(calc(0.76 + var(--bo) * 0.24 + var(--touch-boost, 0)));
 }
 
 .breath .core {
@@ -209,17 +209,17 @@ body::after {
   position: absolute;
   border-radius: 50%;
   background: oklch(0.9 0.03 250);
-  box-shadow: 0 0 6px oklch(0.82 0.04 265 / 0.55);
+  box-shadow: 0 0 4px oklch(0.82 0.04 265 / 0.3);
   transform: translate(-50%, -50%) scale(var(--s, 1));
-  opacity: var(--o, 0.5);
+  opacity: var(--o, 0.4);
   will-change: transform, opacity;
 }
 
 .star.you {
   background: var(--ember);
   box-shadow:
-    0 0 8px var(--ember-soft),
-    0 0 16px oklch(0.82 0.06 95 / 0.45);
+    0 0 6px color-mix(in oklab, var(--ember-soft) 50%, transparent),
+    0 0 11px oklch(0.82 0.06 95 / 0.24);
 }
 
 /* 昼の水面に浮かぶ葉 */
@@ -547,27 +547,12 @@ body::after {
   right: var(--footer-inset);
   bottom: var(--footer-inset);
   z-index: 100;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   pointer-events: auto;
-}
-
-.time-seek-time {
-  flex: 0 0 auto;
-  min-width: 2.8em;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--ink-faint);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  user-select: none;
 }
 
 .time-seek-track {
   position: relative;
-  flex: 1 1 auto;
+  width: 100%;
   height: 32px;
   display: flex;
   align-items: center;

@@ -1,7 +1,7 @@
 import { nowMs } from "@/lib/time";
 
-export const DAY_CYCLE_SECONDS = 720;
-export const DAY_CYCLE_DEBUG_SECONDS = 60;
+export const DAY_CYCLE_SECONDS = 360;
+export const DAY_CYCLE_DEBUG_SECONDS = 30;
 export const SERVICE_MINUTES_PER_DAY = 24 * 60;
 
 type Oklch = { l: number; c: number; h: number };
@@ -194,7 +194,7 @@ export function getPhaseLabel(phase: number): string {
   return "night";
 }
 
-/** 深夜帯（流れ星・星空の対象） */
+/** 夕暮れ〜夜明け手前（0.75〜0.95）。流れ星は isDeepNightPhase を使う */
 export function isNightPhase(phase: number): boolean {
   const p = normalizePhase(phase);
   return p >= 0.75 && p < 0.95;
@@ -213,10 +213,85 @@ function ramp(value: number, start: number, end: number): number {
   return 1;
 }
 
-/** 星空レイヤーの不透明度（0〜1） */
-export function nightAmbience(phase: number): number {
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  if (edge0 === edge1) return x >= edge1 ? 1 : 0;
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+const TWILIGHT_FADE_MIN = 30;
+const NIGHT_START_MIN = 18 * 60;
+const DEEP_NIGHT_START_MIN = 21 * 60;
+const DEEP_NIGHT_END_MIN = 3 * 60;
+const PRE_DAWN_END_MIN = Math.floor(0.15 * SERVICE_MINUTES_PER_DAY);
+
+/** 21:00〜3:00 の深夜帯（星空）— 0〜1 */
+function deepNightStarPresence(minutes: number): number {
+  if (minutes >= DEEP_NIGHT_START_MIN) {
+    return smoothstep(
+      DEEP_NIGHT_START_MIN,
+      DEEP_NIGHT_START_MIN + TWILIGHT_FADE_MIN,
+      minutes,
+    );
+  }
+  if (minutes < DEEP_NIGHT_END_MIN) {
+    return 1 - smoothstep(
+      DEEP_NIGHT_END_MIN - TWILIGHT_FADE_MIN,
+      DEEP_NIGHT_END_MIN,
+      minutes,
+    );
+  }
+  return 0;
+}
+
+/** 18:00〜3:00 と夜明け手前の orb — 深夜帯も継続（星空と重なる）— 0〜1 */
+function twilightOrbPresence(minutes: number): number {
+  if (minutes >= NIGHT_START_MIN) {
+    if (minutes < NIGHT_START_MIN + TWILIGHT_FADE_MIN) {
+      return smoothstep(
+        NIGHT_START_MIN,
+        NIGHT_START_MIN + TWILIGHT_FADE_MIN,
+        minutes,
+      );
+    }
+    return 1;
+  }
+
+  if (minutes < DEEP_NIGHT_END_MIN) {
+    return 1;
+  }
+
+  if (minutes >= DEEP_NIGHT_END_MIN && minutes < PRE_DAWN_END_MIN) {
+    if (minutes >= PRE_DAWN_END_MIN - TWILIGHT_FADE_MIN) {
+      return 1 - smoothstep(
+        PRE_DAWN_END_MIN - TWILIGHT_FADE_MIN,
+        PRE_DAWN_END_MIN,
+        minutes,
+      );
+    }
+    return 1;
+  }
+
+  return 0;
+}
+
+/** 夜の orb — 18:00〜3:00 は常に。21:00〜3:00 は星空と重なる */
+export function orbNightAmbience(phase: number): number {
   const p = normalizePhase(phase);
-  return ramp(p, 0.72, 0.93);
+  const duskIn = ramp(p, 0.72, 0.75);
+  const twilight = twilightOrbPresence(phaseToServiceMinutes(p));
+  return Math.max(duskIn, twilight);
+}
+
+/** 深夜の星空 — 21:00〜3:00 */
+export function starNightAmbience(phase: number): number {
+  const p = normalizePhase(phase);
+  return deepNightStarPresence(phaseToServiceMinutes(p));
+}
+
+/** 21:00〜3:00（星空・流れ星の対象） */
+export function isDeepNightPhase(phase: number): boolean {
+  return deepNightStarPresence(phaseToServiceMinutes(normalizePhase(phase))) > 0;
 }
 
 /** 水面の浮葉レイヤーの不透明度（0〜1） */

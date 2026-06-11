@@ -51,21 +51,25 @@ export function FloatingLeaves({ sessionSeed, ambience }: Props) {
   if (ambience <= 0.01) return null;
 
   return (
-    <div className="floating-leaves" style={{ opacity: ambience }} aria-hidden="true">
+    <div
+      className="floating-leaves"
+      style={{ opacity: Number(ambience.toFixed(4)) }}
+      aria-hidden="true"
+    >
       {leaves.map((leaf, i) => (
         <div
           key={i}
           className="floating-leaf"
           style={
             {
-              left: `${leaf.x}%`,
-              top: `${leaf.y}%`,
-              "--leaf-scale": leaf.scale,
-              "--leaf-spin": `${leaf.spin}deg`,
-              "--leaf-drift-duration": `${leaf.driftDuration}s`,
-              "--leaf-bob-duration": `${leaf.bobDuration}s`,
-              "--leaf-delay": `${leaf.delay}s`,
-              "--leaf-opacity": leaf.opacity,
+              left: `${leaf.x.toFixed(4)}%`,
+              top: `${leaf.y.toFixed(4)}%`,
+              "--leaf-scale": leaf.scale.toFixed(4),
+              "--leaf-spin": `${leaf.spin.toFixed(2)}deg`,
+              "--leaf-drift-duration": `${leaf.driftDuration.toFixed(2)}s`,
+              "--leaf-bob-duration": `${leaf.bobDuration.toFixed(2)}s`,
+              "--leaf-delay": `${leaf.delay.toFixed(2)}s`,
+              "--leaf-opacity": leaf.opacity.toFixed(4),
             } as CSSProperties
           }
         >

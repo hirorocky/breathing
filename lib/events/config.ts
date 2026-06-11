@@ -1,8 +1,10 @@
 /** ランダムイベント — 本番（静かさ優先） */
 export const EVENT_CONFIG_PRODUCTION = {
-  initialDelayMs: 45_000,
-  minIntervalMs: 90_000,
-  maxIntervalMs: 300_000,
+  initialDelayMs: 30_000,
+  minIntervalMs: 60_000,
+  maxIntervalMs: 180_000,
+  /** 深夜帯（21:00〜3:00）は間隔をさらに短く */
+  deepNightIntervalScale: 0.65,
 } as const;
 
 /** ランダムイベント — debug 用（短間隔） */

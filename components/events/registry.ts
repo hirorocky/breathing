@@ -1,6 +1,6 @@
 import { BreathWaveEvent } from "./BreathWaveEvent";
 import { ShootingStarEvent } from "./ShootingStarEvent";
-import { isNightPhase } from "@/lib/dayCycle";
+import { isDeepNightPhase } from "@/lib/dayCycle";
 import type { EventDefinition, EventType } from "@/lib/events/types";
 
 /** ここにイベントを追加していく */
@@ -8,7 +8,7 @@ export const EVENT_REGISTRY: EventDefinition[] = [
   {
     type: "shooting-star",
     label: "流れ星",
-    weight: 1,
+    weight: 2.5,
     durationMs: 3_200,
     Component: ShootingStarEvent,
   },
@@ -32,7 +32,7 @@ export function getEventDefinition(type: EventType): EventDefinition {
 }
 
 export function isEventAllowed(type: EventType, phase: number): boolean {
-  if (type === "shooting-star") return isNightPhase(phase);
+  if (type === "shooting-star") return isDeepNightPhase(phase);
   return true;
 }
 

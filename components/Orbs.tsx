@@ -16,7 +16,7 @@ type OrbLayout = {
 type Props = {
   count: number;
   sessionSeed: number;
-  /** 0〜1。夜は星に譲って薄くする */
+  /** 0〜1。18:00〜3:00 は常に。深夜は星空と重なる */
   ambience?: number;
 };
 
@@ -85,22 +85,23 @@ export function Orbs({ count, sessionSeed, ambience = 1 }: Props) {
 
   useAnimationFrame(animate);
 
-  const orbAmbience = Math.max(0, Math.min(1, 1 - ambience));
-
-  if (orbAmbience <= 0.01) return null;
+  if (ambience <= 0.01) return null;
 
   return (
     <div
       className="orbs"
       ref={containerRef}
-      style={{ opacity: orbAmbience }}
+      style={{ opacity: Number(ambience.toFixed(4)) }}
       aria-hidden="true"
     >
       {orbs.map((orb, i) => (
         <div
           key={i}
           className={`orb${orb.isYou ? " you" : ""}`}
-          style={{ left: `${orb.x}%`, top: `${orb.y}%` }}
+          style={{
+            left: `${orb.x.toFixed(4)}%`,
+            top: `${orb.y.toFixed(4)}%`,
+          }}
           onMouseEnter={() => handleOrbEnter(i)}
           onMouseLeave={handleOrbLeave}
         />

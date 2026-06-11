@@ -59,43 +59,33 @@ export function useBreathEngine({
       const t = (now - startedAt) / 1000;
       const { cycleSeconds: speed, inhaleRatio: inhale, instability: inst } =
         optionsRef.current;
-      const cycle = Math.max(2, speed);
-      const omega = (2 * Math.PI) / cycle;
-
       const envelope = breathEnvelope01(t, speed, inhale);
       const breath = envelope * 2 - 1;
 
-      // 主リズムは吸呼エンベロープに同期。高調波だけ残して生っぽさを足す
-      const wobbleX =
-        0.72 * Math.sin(envelope * Math.PI - 0.18) +
-        0.14 * Math.sin(t * omega * 0.73 + 0.6);
-      const wobbleY =
-        0.72 * Math.sin(envelope * Math.PI + 0.18) +
-        0.14 * Math.sin(t * omega * 0.81 + 1.3);
+      // 主収縮は --bo のみ。bx/by は等方でごく小さなゆらぎだけ
+      noiseX += (Math.random() * 2 - 1 - noiseX) * 0.03;
+      noiseY += (Math.random() * 2 - 1 - noiseY) * 0.03;
+      const jitter = ((noiseX + noiseY) * 0.5) * 0.012 * inst;
+      const scale = 1 + jitter;
 
-      noiseX += (Math.random() * 2 - 1 - noiseX) * 0.04;
-      noiseY += (Math.random() * 2 - 1 - noiseY) * 0.04;
-
-      pink1 += (Math.random() * 2 - 1 - pink1) * 0.006;
-      pink2 += (Math.random() * 2 - 1 - pink2) * 0.013;
-      pink3 += (Math.random() * 2 - 1 - pink3) * 0.028;
-      pink4 += (Math.random() * 2 - 1 - pink4) * 0.055;
+      pink1 += (Math.random() * 2 - 1 - pink1) * 0.005;
+      pink2 += (Math.random() * 2 - 1 - pink2) * 0.01;
+      pink3 += (Math.random() * 2 - 1 - pink3) * 0.02;
+      pink4 += (Math.random() * 2 - 1 - pink4) * 0.038;
       const pink =
         0.52 * pink1 + 0.28 * pink2 + 0.14 * pink3 + 0.06 * pink4;
 
-      const pinkDrive = pink * (3.2 + inst * 0.6);
+      const pinkDrive = pink * (1.4 + inst * 0.35);
       const centerFlicker01 = Math.min(
         1,
         Math.max(0, 0.5 + 0.5 * Math.tanh(pinkDrive)),
       );
       const centerFlicker = 0.2 + centerFlicker01 * 2.0;
 
-      const scaleX = 1 + wobbleX * 0.18 + noiseX * 0.06 * inst;
-      const scaleY = 1 + wobbleY * 0.18 + noiseY * 0.06 * inst;
       const opacity = 0.5 + breath * 0.5;
 
-      root.style.setProperty("--bx", scaleX.toFixed(4));
-      root.style.setProperty("--by", scaleY.toFixed(4));
+      root.style.setProperty("--bx", scale.toFixed(4));
+      root.style.setProperty("--by", scale.toFixed(4));
       root.style.setProperty("--bo", opacity.toFixed(4));
       root.style.setProperty("--cf", centerFlicker.toFixed(4));
       root.style.setProperty("--cf01", centerFlicker01.toFixed(4));

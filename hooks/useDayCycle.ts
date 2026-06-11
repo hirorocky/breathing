@@ -8,7 +8,8 @@ import {
   getPhaseLabel,
   getSyncPhase,
   leafAmbience,
-  nightAmbience,
+  orbNightAmbience,
+  starNightAmbience,
   sampleDayPalette,
 } from "@/lib/dayCycle";
 import { nowMs } from "@/lib/time";
@@ -44,7 +45,8 @@ export function useDayCycle({ debug = false, phaseOffset }: Options) {
     serviceTimeLabel: formatServiceTime(effectivePhase),
     phaseLabel: getPhaseLabel(effectivePhase),
     isManual: phaseOffset !== null,
-    nightAmbience: nightAmbience(effectivePhase),
+    orbNightAmbience: orbNightAmbience(effectivePhase),
+    starNightAmbience: starNightAmbience(effectivePhase),
     leafAmbience: leafAmbience(effectivePhase),
   };
 }

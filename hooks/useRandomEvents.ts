@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isDeepNightPhase } from "@/lib/dayCycle";
 import { getEventConfig, type EventTimingConfig } from "@/lib/events/config";
 import { pickRandomEventType } from "@/components/events/registry";
 import type { ActiveEvent } from "@/lib/events/types";
 import { nowMs } from "@/lib/time";
 
-function randomIntervalMs(config: EventTimingConfig): number {
-  return (
+function randomIntervalMs(config: EventTimingConfig, phase: number): number {
+  let ms =
     config.minIntervalMs +
-    Math.random() * (config.maxIntervalMs - config.minIntervalMs)
-  );
+    Math.random() * (config.maxIntervalMs - config.minIntervalMs);
+
+  if (
+    "deepNightIntervalScale" in config &&
+    isDeepNightPhase(phase)
+  ) {
+    ms *= config.deepNightIntervalScale;
+  }
+
+  return ms;
 }
 
 type Options = {
@@ -73,7 +82,7 @@ export function useRandomEvents({
   const completeEvent = useCallback(() => {
     setActiveEvent(null);
     const config = getEventConfig(debugRef.current);
-    scheduleNext(randomIntervalMs(config));
+    scheduleNext(randomIntervalMs(config, phaseRef.current));
   }, [scheduleNext]);
 
   useEffect(() => {

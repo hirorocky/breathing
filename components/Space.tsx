@@ -64,7 +64,8 @@ export function Space() {
     serviceTimeLabel,
     phaseLabel,
     isManual,
-    nightAmbience,
+    orbNightAmbience,
+    starNightAmbience,
     leafAmbience,
   } = useDayCycle({ debug, phaseOffset });
 
@@ -297,12 +298,12 @@ export function Space() {
         </filter>
       </svg>
       <SiteChrome />
-      <StarField sessionSeed={sessionSeed} ambience={nightAmbience} />
+      <StarField sessionSeed={sessionSeed} ambience={starNightAmbience} />
       <FloatingLeaves sessionSeed={sessionSeed} ambience={leafAmbience} />
       <Orbs
         count={CONFIG.orbCount}
         sessionSeed={sessionSeed}
-        ambience={nightAmbience}
+        ambience={orbNightAmbience}
       />
       <RippleField ripples={ripples} pointer={pointer} />
       <EventLayer activeEvent={activeEvent} onComplete={completeEvent} />
