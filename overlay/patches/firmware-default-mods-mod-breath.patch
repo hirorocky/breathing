@@ -1,0 +1,23 @@
+diff --git a/firmware/stackchan/default-mods/mod.ts b/firmware/stackchan/default-mods/mod.ts
+index fb68e563..a8e3b1d2 100644
+--- a/firmware/stackchan/default-mods/mod.ts
++++ b/firmware/stackchan/default-mods/mod.ts
+@@ -1,5 +1,5 @@
+ import { onLaunch } from 'default-mods/on-launch'
+-import { onRobotCreated } from 'default-mods/on-robot-created'
++import breathMod from 'breath/mod'
+ import type { Robot } from 'robot'
+ 
+ export interface StackchanMod {
+@@ -7,7 +7,10 @@ export interface StackchanMod {
+   onRobotCreated?: (robot: Robot, option?: unknown) => Promise<void> | void
+ }
+ 
++const { onRobotCreated } = breathMod
++
++export { onRobotCreated }
+ export default {
+-  onRobotCreated,
+   onLaunch,
++  onRobotCreated,
+ }

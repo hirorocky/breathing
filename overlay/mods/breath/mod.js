@@ -1,6 +1,6 @@
 import Timer from 'timer'
 
-/** v1.0.0 Layer 0 — 吸 4s / 吐 6s。呼吸は LCD（口 + デフォルト breath motion）のみ。サーボは音が気になるため停止。 */
+/** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
 const EXHALE_SEC = 6
 const MOUTH_INHALE = 0.22
@@ -27,7 +27,6 @@ async function animateMouth(robot, from, to, durationMs) {
 async function runBreathCycle(robot) {
   const inhale = jitter(INHALE_SEC)
   const exhale = jitter(EXHALE_SEC)
-
   await animateMouth(robot, MOUTH_EXHALE, MOUTH_INHALE, inhale * 1000)
   await animateMouth(robot, MOUTH_INHALE, MOUTH_EXHALE, exhale * 1000)
 }
@@ -35,13 +34,13 @@ async function runBreathCycle(robot) {
 async function breathLoop(robot) {
   trace('[breath] start (face only, servo off)\n')
 
-  robot.lookAway()
   robot.setEmotion('NEUTRAL')
   robot.setColor('primary', 0xff, 0xff, 0xff)
   robot.setColor('secondary', 0x00, 0x00, 0x00)
   robot.setMouthOpen(MOUTH_EXHALE)
 
-  await robot.setTorque(false)
+  // setTorque(false) は UART 応答待ちで WDT 再起動することがあるため省略（v1.0.1 調査中）
+  trace('[breath] loop running\n')
 
   while (true) {
     await runBreathCycle(robot)
@@ -49,9 +48,14 @@ async function breathLoop(robot) {
 }
 
 export function onRobotCreated(robot) {
+  trace('[breath] mod onRobotCreated\n')
   Timer.set(() => {
     void breathLoop(robot).catch((error) => {
       trace(`[breath] error ${error}\n`)
     })
   }, 500)
+}
+
+export default {
+  onRobotCreated,
 }

@@ -1,0 +1,15 @@
+diff --git a/firmware/stackchan/main.ts b/firmware/stackchan/main.ts
+index ccd1b42b..16c4f1f9 100644
+--- a/firmware/stackchan/main.ts
++++ b/firmware/stackchan/main.ts
+@@ -279,7 +279,9 @@ async function main() {
+   trace('[main] loading default mod\n')
+   let { onRobotCreated, onLaunch } = defaultMod
+   trace('[main] checking mod override\n')
+-  if (Modules.has('mod')) {
++  if (config.breathHostMod) {
++    trace('[main] breathHostMod: using host default-mods/mod, skipping mod partition\n')
++  } else if (Modules.has('mod')) {
+     const mod = Modules.importNow('mod') as StackchanMod
+     onRobotCreated = mod.onRobotCreated ?? onRobotCreated
+     onLaunch = mod.onLaunch ?? onLaunch

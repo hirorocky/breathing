@@ -15,6 +15,9 @@ git -C "$SUBMODULE" apply "$OVERLAY/patches/"*.patch
 echo "Installing mod-cores3 helper ..."
 install -m 755 "$OVERLAY/firmware/scripts/mod-cores3.sh" "$SUBMODULE/firmware/scripts/mod-cores3.sh"
 
+echo "Installing breath deploy manifest ..."
+install -m 644 "$OVERLAY/firmware/manifest_breath_deploy.json" "$SUBMODULE/firmware/stackchan/manifest_breath_deploy.json"
+
 echo "Done. Firmware dir: $SUBMODULE/firmware"
 echo "  npm install && npm run setup -- --device=esp32  (first time)"
 echo "  npm run build:m5stackchan-cores3"

@@ -1,0 +1,17 @@
+diff --git a/firmware/stackchan/renderers-piu/app-controller.ts b/firmware/stackchan/renderers-piu/app-controller.ts
+index e8b3f847..9f3bde77 100644
+--- a/firmware/stackchan/renderers-piu/app-controller.ts
++++ b/firmware/stackchan/renderers-piu/app-controller.ts
+@@ -1,3 +1,4 @@
++import config from 'mc/config'
+ import type { DrawerButtonSpec } from 'drawer'
+ import type { FaceContext } from 'face-context'
+ import {
+@@ -122,6 +123,7 @@ export class AppController extends Behavior {
+   }
+ 
+   onFaceTouch(): void {
++    if (config.breathHostMod) return
+     trace('[AppController] onFaceTouch\n')
+     this.onDrawerToggle()
+   }
