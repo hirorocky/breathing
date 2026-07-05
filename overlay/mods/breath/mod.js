@@ -1,5 +1,7 @@
 import { attachStatusBar } from 'status-bar'
 import Timer from 'timer'
+import config from 'mc/config'
+import { startDevTools } from 'breath/dev/dev-tools'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
@@ -64,6 +66,15 @@ export function onRobotCreated(robot) {
       trace(`[status-bar] attach failed: ${error}\n`)
     }
   }, 2000)
+
+  Timer.set(() => {
+    if (!config.breathDevTools) return
+    try {
+      startDevTools()
+    } catch (error) {
+      trace(`[dev] start failed: ${error}\n`)
+    }
+  }, 3000)
 }
 
 export default {

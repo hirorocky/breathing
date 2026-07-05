@@ -2,12 +2,17 @@
   "include": ["./manifest_m5stackchan_cores3.json"],
   "config": {
     "breathHostMod": true,
+    "breathDevTools": true,
     "driver": {
       "type": "none"
     }
   },
   "modules": {
     "breath/mod": "../../../overlay/mods/breath/mod",
-    "status-bar": "../../../overlay/mods/breath/status-bar"
+    "status-bar": "../../../overlay/mods/breath/status-bar",
+    "breath/dev/trace-udp": "../../../overlay/mods/breath/dev/trace-udp",
+    "breath/dev/dev-server": "../../../overlay/mods/breath/dev/dev-server",
+    "breath/dev/dev-tools": "../../../overlay/mods/breath/dev/dev-tools",
+    "breath/dev/http-listen": "../../../overlay/mods/breath/dev/http-listen"
   }
 }
