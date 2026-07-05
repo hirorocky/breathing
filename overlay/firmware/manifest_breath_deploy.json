@@ -1,10 +1,19 @@
 {
-  "include": ["./manifest_m5stackchan_cores3.json"],
+  "include": [
+    "./manifest_m5stackchan_cores3.json",
+    "$(MODDABLE)/modules/io/update/manifest.json"
+  ],
   "config": {
     "breathHostMod": true,
     "breathDevTools": true,
+    "devToken": "breath-dev",
     "driver": {
       "type": "none"
+    }
+  },
+  "defines": {
+    "ota": {
+      "autosplit": 1
     }
   },
   "modules": {
@@ -12,7 +21,14 @@
     "status-bar": "../../../overlay/mods/breath/status-bar",
     "breath/dev/trace-udp": "../../../overlay/mods/breath/dev/trace-udp",
     "breath/dev/dev-server": "../../../overlay/mods/breath/dev/dev-server",
-    "breath/dev/dev-tools": "../../../overlay/mods/breath/dev/dev-tools",
-    "breath/dev/http-listen": "../../../overlay/mods/breath/dev/http-listen"
+    "breath/dev/dev-tools": "../../../overlay/mods/breath/dev/dev-tools"
+  },
+  "ffi": {
+    "functions": {
+      "esp_restart": {
+        "arguments": [],
+        "returns": "void"
+      }
+    }
   }
 }

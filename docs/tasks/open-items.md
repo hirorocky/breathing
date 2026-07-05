@@ -91,16 +91,27 @@ overlay/scripts/logs.sh       <--UDP------   trace ミラー（globalThis.trace 
 
 - **サブネットブロードキャスト（/24 仮定の x.y.z.255）は禁止**: 自宅 Deco は /22 のため通常ホスト宛になり、ARP 未解決 pbuf が滞留 → `UDP send error -1 (ERR_MEM)` → 数十秒周期の再起動ループ。グローバルブロードキャスト 255.255.255.255 は lwIP でそのまま送出でき、Mac にも届く（採用）。ユニキャストは `mc/config` の `devLogHost` で指定可。
 - **stack-chan の `HttpServerService` は現行 SDK で全リクエスト死**: upstream の `http-server-service.js` が `headers.set('content-length', body.byteLength)` で変換前の文字列 `body` を参照（undefined）。現行 SDK の `Headers.set` は `value.toString()` を呼ぶため throw → 404/500 フォールバックも同経路で throw → `respondWith(undefined)` の unhandled rejection で **XS abort → 約 40 秒後に WDT 再起動**。upstream へ報告する価値のあるバグ。
-- **SDK の `listen` モジュールも素のままでは危険**: 不正 HTTP（ポートスキャン・telnet 打鍵・ルーターの死活プローブ等）でパースが失敗すると、onRequest 前に reject される内部 Promise（requestPromise / responsePromise）にハンドラが無く、unhandled rejection → XS abort → 再起動（実機で再現）。dev-server は rejection ハンドラを事前接続した overlay コピー **`breath/dev/http-listen`** を使う（`Response` の content-length 実装はこちらが正しい）。
+- **SDK の `listen` モジュールも素のままでは危険**: 不正 HTTP（ポートスキャン・telnet 打鍵・ルーターの死活プローブ等）でパースが失敗すると、onRequest 前に reject される内部 Promise（requestPromise / responsePromise）にハンドラが無く、unhandled rejection → XS abort → 再起動（実機で再現）。Phase 1 では rejection ハンドラを補修した overlay コピー `breath/dev/http-listen` で回避していたが、Phase 2 で dev-server を純コールバック実装（`embedded:network/http/server` 直ルーティング）へ移行したため撤去済み（下記 Phase 2 実装メモ参照）。
 - **unhandled rejection は XS abort（再起動）**: 非同期サーバループでは `promise.then(undefined, ...)` で必ず握りつぶすこと。実測では abort から約 40 秒後に WDT 再起動し、その間ポートは connection refused になる。
 - 起動 +3 秒より前の trace（`[breath] loop running` 等）は UDP には乗らない（ミラー開始前）。ブート直下のログはシリアル採取（環境ガイド §8）で見る。
 
 ### Phase 2 — OTA デプロイ（以後 USB 不要）
 
-- [ ] `manifest_breath_deploy.json` に `"defines": {"ota": {"autosplit": 1}}` → パーティション再構成（**初回のみ USB フル書き込み必須**。NVS の Wi‑Fi 設定は残る）
-- [ ] dev サーバに `PUT /ota`（token 必須）: `embedded:update` で受信ストリーム書込 → complete → esp_restart（FFI）
-- [ ] `overlay/scripts/ota-deploy.sh`: build → curl → 再起動待ち → `GET /status` の buildId 照合まで自動化
-- [ ] 異常系の確認（転送中断・不正バイナリ・OTA 中の再スワイプ）と USB リカバリ手順の文書化
+- [x] `manifest_breath_deploy.json` に `"defines": {"ota": {"autosplit": 1}}` → パーティション再構成（**初回のみ USB フル書き込み必須**。NVS の Wi‑Fi 設定は残る）
+- [x] dev サーバに `PUT /ota`（token 必須）: `embedded:update` で受信ストリーム書込 → complete → esp_restart（FFI）
+- [x] `overlay/scripts/ota-deploy.sh`: build → curl → 再起動待ち → `GET /status` の buildId 照合まで自動化
+- [x] 異常系の確認（誤トークン・転送中断）— 実機確認済み。**不正バイナリの内容検証・OTA 中の再スワイプは未検証**（範囲外。Phase 3 か別途）。USB リカバリ手順は `CLAUDE.md` に追記済み
+
+#### 実装メモ（2026-07-06 実機検証で判明）
+
+- **`breath/dev/http-listen`（Phase 1 の Promise ベース async generator）は OTA には使えない**: 受信ボディをまるごと `ArrayBuffer.concat` してから初めて読める作り（小さな JSON 向け）で、数 MB のファーム全体を一度にバッファすると O(n²) のコピーになる。`PUT /ota` は SDK の `examples/io/listener/httpserverota` に倣い `embedded:network/http/server` を直接ルーティング（`router.set('/status', …)` / `router.set('/ota', …)`）し、受信チャンクをその場で `OTA.write()` する低レベル実装に切替えた（`overlay/mods/breath/dev/dev-server.js`）。このレイヤは Promise を一切使わない純コールバック実装のため、Phase 1 で踏んだ unhandled rejection → XS abort の再発リスクが構造的にない。
+- **SDK の `httpserverota` 例をそのまま真似ると危険**: 例の `onResponse` は `this.status` に関わらず無条件に `updater.complete()` を呼ぶため、書込み失敗（status=500）でも壊れた OTA イメージを起動対象にしてしまう。実装では `status === 200` の場合のみ `complete()`、それ以外は `close()`（= cancel、`esp_ota_set_boot_partition` は呼ばれないので次回起動は現行ファームのまま）に分岐させた。
+- **401/500 でも受信ボディは最後まで `read()` で読み切る**: `embedded:network/http/server` の内部状態機械は `content-length` 分を `read()` しきらないと `onResponse` に進めず接続がハングする。認証失敗時も `updater` には書かずに読み切るだけにして、必ず 401 応答まで到達させている。
+- **パーティション移行は無停止で完了**: `defines.ota.autosplit=1` を追加した USB フル書き込みは `erase-flash` 不要で成功した（`nvs`・`phy_init` は書き換え対象に入らない：`idf.py` の write-flash コマンドが焼くのは bootloader / partition-table / `xs_esp32.bin` / `ota_data_initial.bin` のみ）。生成された `partitions.csv` は `xs`（mod, 256KB）・`storage`（spiffs, 64KB）・`nvs`（24KB）を維持したまま `ota_0`（0x7C0000 = 7936KB）/ `ota_1`（0x7CE000 = 7992KB）/ `otadata`（8KB）を追加。アプリ実測 3,932,896 bytes（≈3.75MiB）は ota_0 の 52% 空きに収まった。
+- **OTA スロット交互切替を `otatool.py read_otadata` で直接確認**: 初回 USB 書込み後は `ota_0` が `ota_seq=1` で起動。1 回目の Wi‑Fi OTA で `ota_1`（`ota_seq=2`）に切替、2 回目の OTA で `ota_0`（`ota_seq=3`）に戻ることを `esp-idf/components/app_update/otatool.py read_otadata` の生読みで確認（`esp_ota_get_next_update_partition` による `"nextota"` 解決が期待通り動作）。
+- **OTA 所要時間の実測（3.75MiB バイナリ、Wi‑Fi・同一 LAN）**: `ota-deploy.sh` 実行から完了までの総時間は 3 回とも 77〜83 秒（うち大半は `mcconfig` の TypeScript/リンクビルド）。アップロード完了 → 再起動 → mDNS 再クレーム＋`/status` 応答までの時間は UDP ログ上で一貫して約 16〜17 秒（ポーリング側では 3 秒間隔で 12 秒後にマッチを確認）。
+- **異常系は再起動なしで復旧**: 誤トークン（`x-dev-token: wrong`）は 401（`curl -sf` は exit 22）を返し、旧 buildId のまま生存を確認。`curl --limit-rate 200k` で開始したアップロードを ~4 秒後に kill しても、接続の `onError` が `updater.close()`（cancel）を呼ぶだけで再起動せず旧 buildId のまま生存し、直後の正常な OTA サイクルも問題なく成功した（OTA サブシステムが中断後も再利用可能なことを確認）。
+- **未検証（範囲外）**: 不正な内容のバイナリ（フォーマット崩れ等）を流し込んだ場合の挙動、OTA 書込み中にステータスバーをスワイプ操作した場合の干渉。呼吸アニメーションのカクつきは目視確認していない（許容事項として Phase 3 に残す）。
 
 ### Phase 3 — 堅牢化（任意）
 
@@ -129,5 +140,5 @@ overlay/scripts/logs.sh       <--UDP------   trace ミラー（globalThis.trace 
 
 1. ~~**ステータスバー**~~ — 完了（2026-07-05）
 2. **Phase 1: Wi‑Fi ログ + status** — UDP trace ミラーが先。以後の OTA 開発自体が楽になる
-3. **Phase 2: OTA デプロイ** — パーティション再構成（初回 USB）→ `PUT /ota` → `ota-deploy.sh`
+3. **Phase 2: OTA デプロイ** — パーティション再構成（初回 USB）→ `PUT /ota` → `ota-deploy.sh` — 完了（2026-07-06、実機確認済み。詳細は上記実装メモ）
 4. tag `v1.0.1`（Phase 3 の堅牢化はタグ後でも可）

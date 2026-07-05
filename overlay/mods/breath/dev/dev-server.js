@@ -1,4 +1,10 @@
-import listen, { Headers, Response } from 'breath/dev/http-listen'
+import HTTPServer from 'embedded:network/http/server'
+import Listener from 'embedded:io/socket/listener'
+import OTA from 'embedded:update'
+import flash from 'embedded:storage/flash'
+import WebPage from 'embedded:network/http/server/options/webpage'
+import Timer from 'timer'
+import FFI from 'mc/ffi'
 import MDNS from 'mdns'
 import Net from 'net'
 import config from 'mc/config'
@@ -6,23 +12,31 @@ import Time from 'time'
 import { readBatterySample } from 'm5stackchan/battery'
 
 /**
- * Wi-Fi 開発環境 Phase 1 — GET /status + mDNS（v1.0.1 dev tools）。
+ * Wi-Fi 開発環境 Phase 1/2 — GET /status・PUT /ota + mDNS（v1.0.1 dev tools）。
  *
- * stack-chan の `HttpServerService` は使わない: 現行 SDK の Headers.set が
- * `value.toString()` を要求するのに対し、同サービスの Response が
- * content-length に undefined を渡すため、任意のリクエスト 1 件で
- * unhandled rejection → XS abort → 再起動になる（2026-07-05 実機で確認。
- * upstream firmware/stackchan/services/http-server/http-server-service.js の
- * `headers.set('content-length', body.byteLength)` が変換前の文字列 body を
- * 参照しているのが原因）。
+ * Phase 1 では `breath/dev/http-listen`（Promise ベースの async generator）を
+ * 使っていたが、あれは受信ボディをまるごと ArrayBuffer へ concat してから
+ * 初めて読めるようになる作り（小さな JSON レスポンス向け）。PUT /ota は数 MB
+ * のファーム丸ごとを受け取るため、その方式では受信ごとに O(n^2) のコピーが
+ * 走り、書込み開始も全受信後になってしまい使えない。
  *
- * SDK の `listen` モジュールも直接は使わない: HTTP パース失敗（ポートスキャンや
- * telnet の garbage 等）で onRequest 前に接続エラーになると、内部 Promise の
- * unhandled rejection で同じく XS abort → 再起動する（実機で再現）。
- * rejection ハンドラを事前接続した overlay コピー `breath/dev/http-listen` を使う。
+ * ここでは SDK の `examples/io/listener/httpserverota` に倣い、
+ * `embedded:network/http/server` を直接ルーティングし、受信チャンクを
+ * その場で OTA へ書き込む。このレイヤは Promise を一切使わない
+ * （コールバックのみ）。Phase 1 で踏んだ「unhandled rejection → XS abort →
+ * 約 40 秒後 WDT 再起動」を構造的に避けるための選択でもある。各コールバック
+ * は例外を握って status を立てるだけで、再スローしない。
+ *
+ * 異常系（トークン不一致・書込み失敗・転送中断）では OTA を complete() せず
+ * close() のみ呼ぶ（= cancel）。complete() を呼ばない限り esp_ota_set_boot_partition
+ * は実行されないため、次回起動は現行ファームのまま — SDK 例の onResponse は
+ * status に関わらず complete() を呼んでしまうため、そこは意図的に例から外した。
  */
 const MDNS_HOST_NAME = 'stackchan'
 const HTTP_PORT = 80
+const RESTART_DELAY_MS = 1000
+
+const Natives = new FFI()
 
 function safeBattery() {
   try {
@@ -49,33 +63,163 @@ function buildStatusPayload() {
   }
 }
 
-function jsonResponse(payload, status = 200) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: new Headers([['content-type', 'application/json']]),
-  })
+function isAuthorized(request) {
+  const token = request.headers.get('x-dev-token')
+  return !!config?.devToken && token === config.devToken
 }
 
-function textResponse(text, status) {
-  return new Response(text, { status })
+const notFound = {
+  ...WebPage,
+  data: ArrayBuffer.fromString('Not Found\n'),
 }
 
-async function serveHttp(port) {
-  for await (const connection of listen({ port })) {
-    let response
-    try {
-      const request = connection.request
-      if (request.method === 'GET' && request.url.pathname === '/status') {
-        response = jsonResponse(buildStatusPayload())
-      } else {
-        response = textResponse('Not Found', 404)
-      }
-    } catch (_error) {
-      response = textResponse('Internal Server Error', 500)
+/** GET /status。ボディは毎リクエストその場で組み立てる（route ではなく connection に持たせる）。 */
+const statusRoute = {
+  onRequest(request) {
+    this.sent = 0
+    if ('GET' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
     }
-    // respondWith の失敗を握りつぶす。unhandled rejection は XS abort（再起動）になる。
-    connection.respondWith(response).then(undefined, () => {})
-  }
+    try {
+      this.status = 200
+      this.data = ArrayBuffer.fromString(JSON.stringify(buildStatusPayload()))
+    } catch (error) {
+      trace(`[dev] status build failed: ${error}\n`)
+      this.status = 500
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onResponse(response) {
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] status connection error: ${message}\n`)
+  },
+}
+
+/** PUT /ota。受信チャンクをその場で OTA パーティションへ書き込む。 */
+const otaRoute = {
+  onRequest(request) {
+    this.bytesReceived = 0
+    this.updater = null
+
+    if (!isAuthorized(request)) {
+      this.status = 401
+      trace('[dev] ota rejected: bad or missing x-dev-token\n')
+      return
+    }
+    if ('PUT' !== request.method) {
+      this.status = 405
+      return
+    }
+    try {
+      this.status = 200
+      this.updater = OTA.open({ partition: flash.open({ path: 'nextota' }) })
+      trace('[dev] ota open\n')
+    } catch (error) {
+      trace(`[dev] ota open failed: ${error}\n`)
+      this.status = 500
+      this.updater = null
+    }
+  },
+  onReadable(count) {
+    // 認証/オープン失敗時も含め、必ず読み切って state machine を進める
+    // （読まないと HTTP レスポンスに進めず接続がハングする）。
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] ota read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if (200 !== this.status || !this.updater || !bytes) return
+    try {
+      this.updater.write(bytes)
+      this.bytesReceived += bytes.byteLength
+    } catch (error) {
+      trace(`[dev] ota write failed: ${error}\n`)
+      this.status = 500
+      try {
+        this.updater.close() // complete() を呼ばない = cancel
+      } catch (_closeError) {
+        // 握りつぶす。abort させない。
+      }
+      this.updater = null
+    }
+  },
+  onResponse(response) {
+    if (200 === this.status && this.updater) {
+      try {
+        this.updater.complete()
+        this.updater = null
+        trace(`[dev] ota complete: ${this.bytesReceived} bytes, restarting in ${RESTART_DELAY_MS}ms\n`)
+        Timer.set(() => Natives.esp_restart(), RESTART_DELAY_MS)
+      } catch (error) {
+        trace(`[dev] ota complete failed: ${error}\n`)
+        this.status = 500
+      }
+    } else if (this.updater) {
+      try {
+        this.updater.close() // complete() を呼ばない = cancel。旧ファームのまま生存させる
+      } catch (_closeError) {
+        // 握りつぶす。
+      }
+      this.updater = null
+      trace(`[dev] ota cancelled (status=${this.status})\n`)
+    }
+    response.status = this.status
+    response.headers.set('content-length', 0)
+    this.respond(response)
+  },
+  onError(message) {
+    trace(`[dev] ota connection error: ${message}\n`)
+    if (this.updater) {
+      try {
+        this.updater.close()
+      } catch (_closeError) {
+        // 握りつぶす。
+      }
+      this.updater = null
+    }
+  },
+}
+
+const router = new Map([
+  ['/status', statusRoute],
+  ['/ota', otaRoute],
+])
+
+function startHttpServer(port) {
+  new HTTPServer({
+    io: Listener,
+    port,
+    onConnect(connection) {
+      connection.accept({
+        onRequest(request) {
+          this.route = router.get(request.path) ?? notFound
+        },
+        onError(message) {
+          trace(`[dev] connection error before routing: ${message}\n`)
+        },
+      })
+    },
+  })
 }
 
 function startMdns() {
@@ -90,10 +234,8 @@ function startMdns() {
   }
 }
 
-/** GET /status を公開し、mDNS で stackchan を名乗る。 */
+/** GET /status・PUT /ota を公開し、mDNS で stackchan を名乗る。 */
 export function startDevServer() {
-  serveHttp(HTTP_PORT).then(undefined, (error) => {
-    trace(`[dev] http server stopped: ${error}\n`)
-  })
+  startHttpServer(HTTP_PORT)
   startMdns()
 }
