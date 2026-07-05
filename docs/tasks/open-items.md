@@ -123,7 +123,7 @@ overlay/scripts/logs.sh       <--UDP------   trace ミラー（globalThis.trace 
 
 ## 3. 観測版の切り方
 
-- [ ] セクション 1（完了）+ セクション 2 の Phase 2 が実機で通った時点で tag `v1.0.1`
+- [x] セクション 1（完了）+ セクション 2 の Phase 2 が実機で通った時点で tag `v1.0.1`（2026-07-06。先行して f89a19f に打たれていたローカルタグを付け替え）
 - [ ] journal は **開発効率の観察** があれば `/write-journal`（探求の Layer 0 観察は v1.1.0）
 
 ---
