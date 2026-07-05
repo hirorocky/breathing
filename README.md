@@ -1,71 +1,53 @@
 # 深呼吸している場所
 
-ブラウザ上で呼吸する空間に滞在する Web アプリ。Next.js（静的エクスポート）と Cloudflare Worker（API）で構成されています。
+存在負荷が高い私たちが、同じ部屋で演じなくていい時間を試す探求プロジェクト。媒体は [StackChan](https://docs.m5stack.com/ja/StackChan)（M5Stack デスクトップロボット）。
 
-## ローカル開発環境
+Web 版（v0.1.0 / v0.2.0）の実装は git 履歴に残している。**v1.0.0 以降**は StackChan ファームウェアと同席観察を回す。
 
-### 必要なもの
+## ドキュメント
 
-| もの | 用途 |
+| パス | 内容 |
 |---|---|
-| Node.js **26** | フロントのビルド・開発、`wrangler` |
-| npm | 依存関係のインストール・スクリプト実行 |
+| [docs/concept-v1/](docs/concept-v1/) | 現在の探求指針（v1.0.0 以降・StackChan） |
+| [docs/journal/](docs/journal/) | 版ごとの観察と気づき |
+| [docs/concept/](docs/concept/) | Web 探求期の指針（参照用） |
+| [overlay/docs/my-cores3/](overlay/docs/my-cores3/) | CoreS3 / K151-R 向け開発ガイド |
 
-リポジトリに `mise.toml` がある場合は、ルートで `mise install` すると Node 26 が入ります。
+## StackChan 開発環境
 
-### 初回セットアップ
+upstream は **`stack-chan/` サブモジュール**（[stack-chan/stack-chan](https://github.com/stack-chan/stack-chan)）。パッチ・MOD・ドキュメントは **`overlay/`** に置く。
 
-リポジトリのルートで次を実行します。
+### 初回
 
 ```bash
-cp .env.local.example .env.local
+git submodule update --init --recursive
+./scripts/stack-chan-setup.sh
+cd stack-chan/firmware
 npm install
-cd worker && npm install && npm run db:migrate:local && cd ..
+npm run setup -- --device=esp32
 ```
 
-### 起動
+### ビルド・MOD 書き込み（K151-R / m5stackchan_cores3）
+
+`stack-chan/firmware/` で:
 
 ```bash
-npm run dev
+npm run build:m5stackchan-cores3
+npm run deploy:m5stackchan-cores3
+npm run mod:m5stackchan-cores3 -- ./mods/<mod>/manifest.json
 ```
 
-フロントは http://localhost:3000 で開きます。
+詳細: [overlay/README.md](overlay/README.md) · エージェント向け: [CLAUDE.md](CLAUDE.md)（`overlay/CLAUDE.local.md` へのリンク）
 
-Worker（admin API や D1 の確認用）だけ起動する場合:
+### upstream 更新後
 
 ```bash
-npm run dev:worker
+git submodule update --remote stack-chan
+./scripts/stack-chan-setup.sh
 ```
 
-フロントと Worker を同時に起動する場合:
+`stack-chan/` 内にパッチ適用後の差分が出るのは正常。**サブモジュール側ではコミットしない。**
 
-```bash
-npm run dev:all
-```
+## エージェント（Claude / Codex）
 
-### ビルド確認
-
-```bash
-npm run lint
-npm run typecheck:worker
-npm run build
-```
-
-エラーなく `out/` が生成されれば OK です。
-
-### Cloudflare（wrangler）の認証情報
-
-`wrangler login` の代わりに API トークンを使う場合:
-
-```bash
-cp .env.cloudflare.example .env.cloudflare
-# CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID を記入
-```
-
-`mise.toml` が `.env.cloudflare` を自動読み込みします（`mise activate` がシェルに入っていること）。
-
-### 関連ドキュメント
-
-- ローカル開発の詳細: [docs/design/07-local-development.md](docs/design/07-local-development.md)
-- 環境変数一覧: [docs/design/06-configuration.md](docs/design/06-configuration.md)
-- 本番デプロイ: [docs/tasks/deploy.md](docs/tasks/deploy.md)
+ルートの [CLAUDE.md](CLAUDE.md)（→ `overlay/CLAUDE.local.md`）と [AGENTS.md](AGENTS.md)（→ `CLAUDE.md`）に、リポジトリ構成・ハードウェア・ビルド手順・エージェント向けルールをまとめている。実体は `overlay/CLAUDE.local.md` 一箇所。

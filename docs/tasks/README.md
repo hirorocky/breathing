@@ -1,6 +1,5 @@
 # tasks — 未実行のタスク
 
-1. [deploy.md](./deploy.md) — 本番デプロイ（Cloudflare アカウントのみの状態から）
-2. [open-items.md](./open-items.md) — その他
+- [open-items.md](./open-items.md) — **v1.0.0**（呼吸する StackChan）の骨核とタスク
 
-`deploy.md` は **フェーズ 1 → 4** の順に進めてください（GitHub 作成が最初）。
+Web 版デプロイ手順（`deploy.md`）は StackChan 移行に伴い削除。

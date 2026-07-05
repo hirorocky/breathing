@@ -1,0 +1,4 @@
+[submodule "stack-chan"]
+	path = stack-chan
+	url = https://github.com/stack-chan/stack-chan.git
+	branch = develop

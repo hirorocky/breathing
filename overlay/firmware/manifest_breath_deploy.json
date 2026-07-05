@@ -1,0 +1,6 @@
+{
+  "include": ["./manifest_m5stackchan_cores3.json"],
+  "modules": {
+    "mod": "../../../overlay/mods/breath/mod"
+  }
+}

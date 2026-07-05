@@ -1,5 +1,26 @@
-# その他
+# v1.0.0 — 呼吸する StackChan（完了）
 
-- [ ] `/privacy` の問い合わせ先（`NEXT_PUBLIC_PRIVACY_CONTACT`）を実アドレスに設定
-- [ ] Cloudflare Billing アラートを有効化
-- [ ] 本番 URL 確定後、Pages `_headers` で CSP 等を検討
+**v0.2.0**（Web）の次。**v1.0.0 は journal 確定。** 詳細: [journal/v1.0.0.md](../journal/v1.0.0.md)
+
+---
+
+## この版の骨核（最終）
+
+| 項目 | v1.0.0 |
+|---|---|
+| **媒体** | K151-R / m5stackchan_cores3 |
+| **振る舞い** | Layer 0 — 自動で呼吸が始まり続く |
+| **サーボ** | **停止**（駆動音が気になる。呼吸は LCD のみ） |
+| **LCD** | 黒背景・白パーツ、口 + breath motion |
+| **LED / 音声** | オフ |
+
+MOD: `overlay/mods/breath/`
+
+---
+
+## 次（v1.1.0 以降）
+
+- [ ] 同室 2〜10 人で同席観察
+- [ ] **人間でも Web でもないロボット** としての第三焦点を探求（v0.2.0 の他者感・人工感への兆し）
+- [ ] git tag `v1.0.0`
+- [ ] サーボ・LED の取捨（同室観察後）

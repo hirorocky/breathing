@@ -1,0 +1,14 @@
+diff --git a/firmware/stackchan/manifest.json b/firmware/stackchan/manifest.json
+index 6e0fa5b1..395445b3 100644
+--- a/firmware/stackchan/manifest.json
++++ b/firmware/stackchan/manifest.json
+@@ -280,7 +280,8 @@
+   "typescript": {
+     "tsconfig": {
+       "compilerOptions": {
+-        "noImplicitAny": false
++        "noImplicitAny": false,
++        "lib": ["es2025", "esnext.disposable"]
+       }
+     }
+   }

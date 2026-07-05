@@ -1,15 +1,10 @@
-node_modules
-worker/node_modules
-worker/.wrangler
-.next
-out
-tsconfig.tsbuildinfo
+.DS_Store
 
+# ローカル env（過去の Web 開発用ファイルが残っていても無視）
 .env
 .env*.local
 .env.cloudflare
 
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+# stack-chan submodule のビルド成果物（念のため）
+stack-chan/firmware/node_modules
+stack-chan/web/node_modules

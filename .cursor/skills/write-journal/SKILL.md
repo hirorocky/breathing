@@ -1,6 +1,6 @@
 ---
 name: write-journal
-description: Writes or updates exploration journal entries in docs/journal for the breathing project through dialogue with the user. Use when the user asks to write journal, 気づき, 観察, version notes, v0.x journal, journal 追記, or invokes /write-journal. Does not invent observations or insights—asks first, writes only what the user has shared or confirmed. Does not change implementation unless explicitly requested.
+description: Writes or updates exploration journal entries in docs/journal for the breathing project through dialogue with the user. Use when the user asks to write journal, 気づき, 観察, version notes, v0.x / v1.x journal, journal 追記, or invokes /write-journal. Does not invent observations or insights—asks first, writes only what the user has shared or confirmed. Does not change implementation unless explicitly requested.
 ---
 
 # Journal を書く
@@ -92,7 +92,7 @@ description: Writes or updates exploration journal entries in docs/journal for t
 | 同じ版の追加観察 | 対話 → 確認 → 既存の「観察」「気づき」「次に試す」へ統合 |
 | 手順・採番の変更 | `docs/journal/README.md`（journal 依頼でなければ触らない） |
 
-ファイル名はタグと一致（`v0.2.0` → `v0.2.0.md`）。タグ未作成の版はメタ行に `（journal 確定後に付与）` と書いてよい。
+ファイル名はタグと一致（`v0.2.0` → `v0.2.0.md`、`v1.0.0` → `v1.0.0.md`）。タグ未作成の版はメタ行に `（journal 確定後に付与）` と書いてよい。
 
 ---
 
@@ -184,7 +184,7 @@ description: Writes or updates exploration journal entries in docs/journal for t
 → これまでの対話で出た観察・気づきだけを統合。会話にない段落は追加しない。git 手順は案内のみ（コミット・タグはユーザー依頼時）。
 
 **journal だけ、実装を変えないで**
-→ スキル全体のデフォルト。コード・CSS・docs/concept も触らない（journal 配下のみ）。
+→ スキル全体のデフォルト。コード・CSS・`stack-chan/` upstream も触らない（journal / concept 依頼時）。`overlay/` のパッチ追加は別依頼。
 
 ---
 
@@ -207,5 +207,5 @@ EOF
 
 ## 参照
 
-- 探求の目的・ループ: [docs/concept/01-purpose.md](../../../docs/concept/01-purpose.md)
+- 探求の目的・ループ: [docs/concept-v1/01-purpose.md](../../../docs/concept-v1/01-purpose.md)
 - 記述例（対話で埋めた完成形）: [docs/journal/v0.1.0.md](../../../docs/journal/v0.1.0.md)
