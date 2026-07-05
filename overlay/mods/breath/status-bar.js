@@ -1,67 +1,108 @@
-import { onTouchBegan, onTouchEnded, onTouchMoved } from 'touch-debug'
-import { Container, Label, Skin, Style } from 'piu/MC'
+import { readBatterySample } from 'm5stackchan/battery'
+import { Container, Content, Label, Skin, Style } from 'piu/MC'
 import Timer from 'timer'
 
-/** 画面上端から下スワイプで表示する時刻・バッテリーバー（v1.0.1） */
-const TOP_ZONE_Y = 80
+/** 画面上端から下スワイプで表示する時刻・バッテリーバー */
+const STATUS_BAR_VERSION = 17
+const TOP_ZONE_HEIGHT = 80
 const MIN_SWIPE_DY = 40
 const AUTO_HIDE_MS = 5000
-const BAR_HEIGHT = 22
+const BAR_HEIGHT = 28
+const SLIDE_HIDDEN = -BAR_HEIGHT
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
-const barSkin = new Skin({ fill: '#000000' })
-const textStyle = new Style({ font: 'k8x12-12', color: '#ffffff' })
+// 顔の画面（黒背景・白前景）と区別するため、あえて反転トーンにしている
+const barSkin = new Skin({ fill: '#ffffff' })
+const borderSkin = new Skin({ fill: '#cccccc' })
+const textStyle = new Style({ font: '20px Open Sans', color: '#000000' })
 
-function formatTime(ms) {
-  const d = new Date(ms)
-  const h = String(d.getHours()).padStart(2, '0')
-  const m = String(d.getMinutes()).padStart(2, '0')
+function formatTimeJst() {
+  const d = new Date(Date.now() + JST_OFFSET_MS)
+  const h = String(d.getUTCHours()).padStart(2, '0')
+  const m = String(d.getUTCMinutes()).padStart(2, '0')
   return `${h}:${m}`
 }
 
-function readTime(rtc) {
-  if (!rtc) return '--:--'
-  try {
-    return formatTime(rtc.time)
-  } catch (error) {
-    trace(`[status-bar] RTC read failed: ${error}\n`)
-    return '--:--'
-  }
+function formatBattery(sample) {
+  if (!sample) return '--%'
+  const prefix = sample.charging ? '+' : ''
+  return `${prefix}${sample.pct}%`
 }
 
 class StatusBarBehavior extends Behavior {
-  onCreate(content, data) {
-    this.rtc = data?.rtc
-    this.timeLabel = content.first
-    this.batteryLabel = content.last
+  onCreate(content) {
+    this.timeLabel = content.content('time')
+    this.batteryLabel = content.content('battery')
+    this.open = false
+    this.labelTimer = null
+    this.hideTimer = null
+    this.slideY = SLIDE_HIDDEN
+    this.applyPosition(content)
+  }
+
+  applyPosition(content) {
+    content.coordinates = { left: 0, right: 0, top: this.slideY, height: BAR_HEIGHT }
   }
 
   updateLabels() {
-    if (this.timeLabel) this.timeLabel.string = readTime(this.rtc)
-    // AXP2101 は setup-target で既に使用中。二重 SMBus はクラッシュの原因になるため未読。
-    if (this.batteryLabel) this.batteryLabel.string = '--%'
+    if (this.timeLabel) this.timeLabel.string = formatTimeJst()
+    if (this.batteryLabel) this.batteryLabel.string = formatBattery(readBatterySample())
   }
 
-  onTimeChanged(content) {
-    if (!content.visible) return
+  startLabelTimer() {
+    this.stopLabelTimer()
     this.updateLabels()
+    const tick = () => {
+      if (!this.open) return
+      this.updateLabels()
+      this.labelTimer = Timer.set(tick, 1000)
+    }
+    this.labelTimer = Timer.set(tick, 1000)
   }
 
-  show(content) {
+  stopLabelTimer() {
+    if (this.labelTimer) {
+      Timer.clear(this.labelTimer)
+      this.labelTimer = null
+    }
+  }
+
+  startHideTimer(content) {
+    this.stopHideTimer()
+    this.hideTimer = Timer.set(() => this.hideBar(content), AUTO_HIDE_MS)
+  }
+
+  stopHideTimer() {
+    if (this.hideTimer) {
+      Timer.clear(this.hideTimer)
+      this.hideTimer = null
+    }
+  }
+
+  showBar(content) {
+    this.open = true
+    this.slideY = 0
     content.visible = true
-    content.interval = 1000
-    content.start()
-    this.updateLabels()
+    this.applyPosition(content)
+    this.startLabelTimer()
+    this.startHideTimer(content)
+    trace('[status-bar] showBar\n')
   }
 
-  hide(content) {
+  hideBar(content) {
+    this.stopHideTimer()
+    if (!this.open && this.slideY === SLIDE_HIDDEN) return
+    this.open = false
+    this.stopLabelTimer()
+    this.slideY = SLIDE_HIDDEN
     content.visible = false
-    content.stop()
+    this.applyPosition(content)
+    trace('[status-bar] hideBar\n')
   }
 }
 
-const StatusBar = Container.template(($) => ({
+const StatusBar = Container.template(() => ({
   name: 'breath-status-bar',
-  top: 0,
   left: 0,
   right: 0,
   height: BAR_HEIGHT,
@@ -69,72 +110,46 @@ const StatusBar = Container.template(($) => ({
   skin: barSkin,
   Behavior: StatusBarBehavior,
   contents: [
-    Label($, { left: 8, style: textStyle, string: '--:--' }),
-    Label($, { right: 8, style: textStyle, string: '--%' }),
+    new Label(null, { name: 'time', left: 8, top: 4, style: textStyle, string: '--:--' }),
+    new Label(null, { name: 'battery', right: 8, top: 4, style: textStyle, string: '--%' }),
+    new Content(null, { left: 0, right: 0, bottom: 0, height: 1, skin: borderSkin }),
   ],
 }))
 
-function createRtc(device) {
-  if (!device?.peripheral?.RTC) return undefined
-  try {
-    return new device.peripheral.RTC({})
-  } catch (error) {
-    trace(`[status-bar] RTC init failed: ${error}\n`)
-    return undefined
-  }
-}
+export function attachStatusBar(robot) {
+  const bar = new StatusBar({})
 
-export function attachStatusBar(robot, device) {
-  const rtc = createRtc(device)
-  const bar = new StatusBar({}, { rtc })
+  const TopSwipeZone = Container.template(() => ({
+    name: 'breath-status-swipe',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: TOP_ZONE_HEIGHT,
+    active: true,
+    backgroundTouch: true,
+    Behavior: class extends Behavior {
+      onTouchBegan(_content, _id, _x, y) {
+        this.touchStartY = y
+      }
 
+      onTouchEnded(_content, _id, _x, y) {
+        if (this.touchStartY == null) return
+        const dy = y - this.touchStartY
+        this.touchStartY = null
+        const barBehavior = bar.behavior
+        if (!barBehavior.open && dy >= MIN_SWIPE_DY) {
+          trace('[status-bar] swipe down\n')
+          bar.delegate('showBar')
+        } else if (barBehavior.open && dy <= -MIN_SWIPE_DY) {
+          trace('[status-bar] swipe up\n')
+          bar.delegate('hideBar')
+        }
+      }
+    },
+  }))
+
+  robot.renderer?.addDecorator(new TopSwipeZone({}))
   robot.renderer?.addDecorator(bar)
 
-  let touchStart = null
-  let visible = false
-  let hideTimer = null
-
-  const hide = () => {
-    if (hideTimer) {
-      Timer.clear(hideTimer)
-      hideTimer = null
-    }
-    bar.delegate?.('hide')
-    visible = false
-  }
-
-  const show = () => {
-    if (hideTimer) Timer.clear(hideTimer)
-    bar.delegate?.('show')
-    visible = true
-    hideTimer = Timer.set(hide, AUTO_HIDE_MS)
-  }
-
-  onTouchBegan(({ x, y }) => {
-    if (visible) {
-      touchStart = { x, y, zone: 'bar' }
-    } else if (y <= TOP_ZONE_Y) {
-      touchStart = { x, y, zone: 'top' }
-    }
-  })
-
-  onTouchMoved(({ x, y }) => {
-    if (touchStart) {
-      touchStart.lastX = x
-      touchStart.lastY = y
-    }
-  })
-
-  onTouchEnded(({ x, y }) => {
-    if (!touchStart) return
-    const dy = y - touchStart.y
-    if (visible && dy <= -MIN_SWIPE_DY) {
-      hide()
-    } else if (!visible && touchStart.zone === 'top' && dy >= MIN_SWIPE_DY) {
-      show()
-    }
-    touchStart = null
-  })
-
-  trace('[status-bar] attached\n')
+  trace(`[status-bar] attached v${STATUS_BAR_VERSION}\n`)
 }

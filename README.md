@@ -37,7 +37,7 @@ npm run deploy:m5stackchan-cores3
 npm run mod:m5stackchan-cores3 -- ./mods/<mod>/manifest.json
 ```
 
-詳細: [overlay/README.md](overlay/README.md) · エージェント向け: [CLAUDE.md](CLAUDE.md)（`overlay/CLAUDE.local.md` へのリンク）
+詳細: [overlay/README.md](overlay/README.md) · エージェント向け: [CLAUDE.md](CLAUDE.md)
 
 ### upstream 更新後
 
@@ -50,4 +50,4 @@ git submodule update --remote stack-chan
 
 ## エージェント（Claude / Codex）
 
-ルートの [CLAUDE.md](CLAUDE.md)（→ `overlay/CLAUDE.local.md`）と [AGENTS.md](AGENTS.md)（→ `CLAUDE.md`）に、リポジトリ構成・ハードウェア・ビルド手順・エージェント向けルールをまとめている。実体は `overlay/CLAUDE.local.md` 一箇所。
+ルートの [CLAUDE.md](CLAUDE.md) と [AGENTS.md](AGENTS.md)（→ `CLAUDE.md`）に、リポジトリ構成・ハードウェア・ビルド手順・エージェント向けルールをまとめている。

@@ -1,3 +1,4 @@
+import { attachStatusBar } from 'status-bar'
 import Timer from 'timer'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
@@ -49,11 +50,20 @@ async function breathLoop(robot) {
 
 export function onRobotCreated(robot) {
   trace('[breath] mod onRobotCreated\n')
+
   Timer.set(() => {
     void breathLoop(robot).catch((error) => {
       trace(`[breath] error ${error}\n`)
     })
   }, 500)
+
+  Timer.set(() => {
+    try {
+      attachStatusBar(robot)
+    } catch (error) {
+      trace(`[status-bar] attach failed: ${error}\n`)
+    }
+  }, 2000)
 }
 
 export default {

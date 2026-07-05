@@ -262,8 +262,39 @@ npm run dev
 - **症状（生の `mcconfig`/`mcrun` を直接使う場合のみ）**: 生の `mcconfig`（または `mcrun`）コマンドを**直接**実行すると `/bin/sh: tsc: command not found` が出て `# typescript compile failure` でビルドが失敗する。一方 `npm run build`/`npm run deploy`、および専用ボード構成向けの `npm run build:m5stackchan-cores3`/`npm run deploy:m5stackchan-cores3` では同じビルドが成功する。
   - **原因**: Moddableのビルドは内部で `tsc`（TypeScriptコンパイラ）をPATHから呼ぶ。`npm run ...` 経由だと npm が自動で `./node_modules/.bin` をPATHに追加するため、プロジェクトの TypeScript(`firmware/node_modules/.bin/tsc`) が見つかる。しかしシェルで `mcconfig` を直接叩くと `node_modules/.bin` がPATHに無いため `tsc` が見つからない。
   - **対処**: 専用npmスクリプト（`build:m5stackchan-cores3`/`deploy:m5stackchan-cores3`/`debug:m5stackchan-cores3`/`mod:m5stackchan-cores3`、2章参照）を追加したことで、通常はこの問題自体を踏まなくなった。それでも何らかの理由で生の `mcconfig`/`mcrun` を直接使いたい場合は、`firmware/` ディレクトリで `node_modules/.bin` をPATHに通す必要がある（例: `PATH="$PWD/node_modules/.bin:$PATH" mcconfig ...`）。
+- **カスタム platform の `setup-target.js` のコードが実機で走らない（電源レール patch やバッテリー登録処理が一度も実行されていない）**: 専用ボード構成（`platforms/m5stackchan_cores3/`）の manifest で独自の `setup-target.js` を `"setup/target"` として登録していても、ビルド成果物の makefile では **SDK 側の定義（`$MODDABLE/build/devices/esp32/targets/<target>/setup-target.js`）が後から上書きして勝つ**ため、独自コードがビルドに一切含まれないことがあります。
+  - **切り分け**: ビルド成果物ディレクトリで `grep "setup.target" makefile` を実行し、`setup/target` というモジュール名を生成しているルールのソースパスが自分の `platforms/.../setup-target.js` を指しているか、SDK 側のパスを指しているか確認します。SDK側を指していれば、そのモジュール名では独自コードは実行されません。
+  - **対処**: 同じモジュール名を奪い合うのではなく、別名のモジュール（例: `m5stackchan/battery` のような専用モジュール）を manifest に登録し、SDK が生成する `host/provider.js` 側のフックから呼び出す構成にします（次項参照）。
+- **AXP2101 へのI2Cアクセスで `RangeError: duplicate address (in I2C)`**: SDK側の `setup-target.js` が起動時に `globalThis.power = new Power(...)` を実行し、AXP2101（I2C 0x34）のI2Cハンドルを保持したまま `#axp2101` のようなプライベートフィールドに隠しています。この状態で別途 `new SMBus({ address: 0x34, ... })` を開こうとすると、同一アドレスの二重オープンとして例外になります。
+  - **対処**: 別インスタンスを開くのではなく、SDKが内部で使う `SMBus` クラス自体を `host/provider.js` でラップして捕獲します（`class BreathSMBus extends SMBus { constructor(options) { super(options); if (options?.address === 0x34) registerPowerIO(this) } }` を `device.io.SMBus` に差し替える）。これにより、SDKが生成する**同一のI2Cハンドル**を読み取り専用に使い回せます。実装は `overlay/patches/firmware-platform-breath-battery.patch`（`host/provider.js` / `battery-registry.js`）を参照してください。
 
-## 8. 補足: StackChan Remote Controller Kit (K151-R) を使う場合
+## 8. ヘッドレスでのログ採取（`xsbug` GUIなしでシリアルログを読む）
+
+`xsbug`（GUI デバッガ）を開かずに、CLI からブート時の `trace()` ログをそのままファイルに採取したい場合があります（電源パッチやバッテリー読み取りのような、ブート直後の一度しか通らない処理を調べるときなど）。`xsbug-log`（Moddable SDK 付属）を使うと、シリアル経由のログをテキストとしてキャプチャできます。
+
+### 手順
+
+```sh
+source ~/.local/share/xs-dev-export.sh
+pkill -f serial2xsbug
+
+# stdin をパイプで開いたままにするのが重要（下記の注意点を参照）
+tail -f /dev/null | node "$MODDABLE/tools/xsbug-log/xsbug-log.js" serial2xsbug /dev/cu.usbmodem1101 460800 8N1 > capture.log 2>&1 &
+
+# デバイスをリセットしてブートからのトレースを取る
+"$(ls ~/.espressif/python_env/*/bin/python | head -1)" -m esptool --chip esp32s3 -p /dev/cu.usbmodem1101 --before default-reset --after hard-reset chip-id
+```
+
+- ポート名（`/dev/cu.usbmodem1101`）とボーレートは実機・SDKのバージョンに応じて変わることがあるので、`npm run scan` 等で確認してから合わせてください。
+- 最後の行はesptoolの1コマンド（`chip-id`）を使ってデバイスをリセットし、ブートログを起こすためのものです。物理リセットボタンでも代用できます。
+- `capture.log` にブート時からの `trace()` 出力がテキストとして残ります。
+
+### 注意点
+
+- **`XSBUG_LOGMACHINE` によるプレーンモードは現行バージョンでは壊れている**（`cmdSet undefined` のエラーで動作しない）。`xsbug-log` は対話型の `xsdb` として動作する前提で作られているため、上記のように**標準入力をパイプで開いたままにする**必要があります。`nohup` や `< /dev/null` で stdin を閉じると readline がクラッシュしてログが取れません。
+- `serial2xsbug` はポートを開く際に **DTR トグルでデバイスをリセット**することがあります。ブート直後からのログが必要な場合は、`serial2xsbug` 起動後に改めて上記のリセットコマンドを実行してください。
+
+## 9. 補足: StackChan Remote Controller Kit (K151-R) を使う場合
 
 > [!NOTE]
 > 以下はこのドキュメントの筆者が実際に所有している製品固有の情報です。この repo のCoreS3対応は特定の基板構成に対してコントリビュートされたものであり、M5Stack公式のK151アダプタ基板と完全に一致するかどうかは実機での検証が必要です。

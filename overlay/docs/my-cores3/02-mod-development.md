@@ -260,6 +260,19 @@ const aiPrefs = loadPreferences('ai')
 
 視線や動きに関するより詳しい挙動は [`./03-face-voice-behavior.md`](./03-face-voice-behavior.md) も参照してください。
 
+### バッテリー残量（`m5stackchan_cores3` 限定、robot API ではない）
+
+Stack-chan専用ボード構成（`platforms/m5stackchan_cores3/`）では、`robot` のAPIではなく、ホストが提供する専用モジュール `m5stackchan/battery` からバッテリー残量を読みます（breathing overlay の `overlay/patches/firmware-platform-breath-battery.patch` で追加）。
+
+```js
+import { readBatterySample } from 'm5stackchan/battery'
+
+const sample = readBatterySample()
+// sample: { pct: number, mv: number, charging: boolean } | null（未取得/読み取り失敗時は null）
+```
+
+AXP2101（I2C 0x34）は SDKの `setup-target.js` が起動時に占有するため、MODや別モジュールから直接 `new SMBus({ address: 0x34, ... })` を開くと `RangeError: duplicate address` になります。バッテリーを読みたい場合は必ず `readBatterySample()` を使ってください（実装例: `overlay/mods/breath/status-bar.js`。詳細は [`./01-environment-and-build.md`](./01-environment-and-build.md) のトラブルシューティングを参照）。
+
 ## 8. 設定をMODから読む
 
 MODから設定値を読む方法は2種類あります。

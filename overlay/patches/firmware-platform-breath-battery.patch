@@ -1,0 +1,96 @@
+diff --git a/firmware/platforms/m5stackchan_cores3/battery-registry.js b/firmware/platforms/m5stackchan_cores3/battery-registry.js
+new file mode 100644
+index 00000000..33991814
+--- /dev/null
++++ b/firmware/platforms/m5stackchan_cores3/battery-registry.js
+@@ -0,0 +1,48 @@
++let powerIO = null;
++let gaugeEnabled = false;
++
++export function registerPowerIO(io) {
++	powerIO = io;
++	trace("[m5stackchan/battery] power io captured\n");
++}
++
++function pctFromMilliVolts(mv) {
++	if (mv <= 0) return 0;
++	const v = mv / 1000;
++	const vmin = 2.6;
++	const vmax = 4.35;
++	if (v <= vmin) return 0;
++	if (v >= vmax) return 100;
++	return Math.round((100 * (v - vmin)) / (vmax - vmin));
++}
++
++function enableBatteryGauge(io) {
++	const detect = io.readUint8(0x68);
++	io.writeUint8(0x68, detect | 0x01);
++	const gauge = io.readUint8(0x18);
++	io.writeUint8(0x18, gauge | 0x08);
++}
++
++export function readBatterySample() {
++	if (!powerIO) return null;
++	try {
++		if (!gaugeEnabled) {
++			enableBatteryGauge(powerIO);
++			gaugeEnabled = true;
++		}
++		const hi = powerIO.readUint8(0x34);
++		const lo = powerIO.readUint8(0x35);
++		const mv = ((hi & 0x1f) << 8) | lo;
++		let pct = powerIO.readUint8(0xa4);
++		if (pct > 100 || pct <= 0) pct = pctFromMilliVolts(mv);
++		const charging = Boolean(powerIO.readUint8(0x01) & 0x40);
++		return {
++			pct: Math.min(100, Math.max(0, pct)),
++			mv,
++			charging,
++		};
++	} catch (error) {
++		trace(`[m5stackchan/battery] read failed: ${error}\n`);
++		return null;
++	}
++}
+diff --git a/firmware/platforms/m5stackchan_cores3/host/provider.js b/firmware/platforms/m5stackchan_cores3/host/provider.js
+index 65cd7adf..da0891db 100644
+--- a/firmware/platforms/m5stackchan_cores3/host/provider.js
++++ b/firmware/platforms/m5stackchan_cores3/host/provider.js
+@@ -32,6 +32,14 @@ import SMBus from "embedded:io/smbus";
+ import SPI from "embedded:io/spi";
+ import Touch from "M5StackCoreS3Touch";
+ import TouchPanel from "embedded:sensor/Touch/Si12T"
++import { registerPowerIO } from "m5stackchan/battery";
++
++class BreathSMBus extends SMBus {
++	constructor(options) {
++		super(options);
++		if (0x34 === options?.address) registerPowerIO(this);
++	}
++}
+ 
+ const device = {
+ 	I2C: {
+@@ -78,7 +86,7 @@ const device = {
+ 		PulseWidth,
+ 		PWM,
+ 		Serial,
+-		SMBus,
++		SMBus: BreathSMBus,
+ 		SPI,
+ 	},
+ 	pin: {
+diff --git a/firmware/platforms/m5stackchan_cores3/manifest.json b/firmware/platforms/m5stackchan_cores3/manifest.json
+index 318406e6..47be7d59 100644
+--- a/firmware/platforms/m5stackchan_cores3/manifest.json
++++ b/firmware/platforms/m5stackchan_cores3/manifest.json
+@@ -8,7 +8,8 @@
+   ],
+   "modules": {
+     "m5stack-cores3/setup-target": "$(BUILD)/devices/esp32/targets/m5stack_cores3/setup-target",
+-    "setup/target": "./setup-target"
++    "setup/target": "./setup-target",
++    "m5stackchan/battery": "./battery-registry"
+   },
+   "config": {
+     "driver": {

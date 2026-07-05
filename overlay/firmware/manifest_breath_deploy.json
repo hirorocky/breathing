@@ -1,9 +1,13 @@
 {
   "include": ["./manifest_m5stackchan_cores3.json"],
   "config": {
-    "breathHostMod": true
+    "breathHostMod": true,
+    "driver": {
+      "type": "none"
+    }
   },
   "modules": {
-    "breath/mod": "../../../overlay/mods/breath/mod"
+    "breath/mod": "../../../overlay/mods/breath/mod",
+    "status-bar": "../../../overlay/mods/breath/status-bar"
   }
 }
