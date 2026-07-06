@@ -22,6 +22,7 @@
     "settings-bar": "../../../overlay/mods/breath/settings-bar",
     "breath/dev/trace-udp": "../../../overlay/mods/breath/dev/trace-udp",
     "breath/dev/dev-server": "../../../overlay/mods/breath/dev/dev-server",
+    "breath/dev/beacon": "../../../overlay/mods/breath/dev/beacon",
     "breath/dev/dev-tools": "../../../overlay/mods/breath/dev/dev-tools"
   },
   "ffi": {

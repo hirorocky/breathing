@@ -3,16 +3,29 @@
 # build（buildId 注入）→ PUT /ota → 再起動待ち → GET /status の buildId 照合。
 #
 # 使い方:
-#   overlay/scripts/ota-deploy.sh                # 既定ホスト 192.168.68.76
-#   overlay/scripts/ota-deploy.sh 192.168.1.50    # ホストを明示
+#   overlay/scripts/ota-deploy.sh                # ホスト省略 → UDP ビーコンで自動発見
+#   overlay/scripts/ota-deploy.sh 192.168.1.50    # ホストを明示（自動発見をスキップ）
 #
 # 本 LAN（TP-Link Deco）はクライアント間 multicast を遮断するため mDNS
-# （stackchan.local）は使えない。IP 直打ちが前提（CLAUDE.md 参照）。
+# （stackchan.local）は使えない。ホスト省略時は `stackchan-ip.sh`（UDP ビーコン
+# 受信、port 8687）で自動発見する。DHCP で IP が変わっても引数なしで呼べば
+# 追従する（DHCP 予約は不要）。
 set -euo pipefail
 
-HOST="${1:-192.168.68.76}"
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$REPO_ROOT/overlay/scripts"
+
+if [ -n "${1:-}" ]; then
+  HOST="$1"
+else
+  echo "[ota-deploy] no host given: auto-discovering via UDP beacon (udp/8687, up to 15s)"
+  if ! HOST="$("$SCRIPT_DIR/stackchan-ip.sh")"; then
+    echo "[ota-deploy] ERROR: auto-discovery failed (no beacon received). Specify host explicitly: ota-deploy.sh <ip>" >&2
+    exit 1
+  fi
+  echo "[ota-deploy] discovered host: $HOST"
+fi
+
 FIRMWARE_DIR="$REPO_ROOT/stack-chan/firmware"
 BIN_PATH="$HOME/.local/share/moddable/build/tmp/esp32/m5stackchan_cores3/debug/stackchan/xsProj-esp32s3/build/xs_esp32.bin"
 DEV_TOKEN="breath-dev"

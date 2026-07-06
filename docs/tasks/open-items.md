@@ -57,7 +57,7 @@ Layer 0 の同席観察（v1.1.0）はこの版の外。
 
 ### 運用メモ（2026-07-06）
 
-- **デバイスの IP は DHCP で変わる**（実績: 電源入れ直しで .76 → .66）。`ota-deploy.sh <ip>` / `curl http://<ip>/status` は都度指定。新 IP の特定は `logs.sh` を起動して電源投入すれば、UDP ブート トレースの送信元 IP で分かる（ブロードキャストは IP 非依存）。恒久対策はルーター（Deco）側の DHCP 予約を推奨
+- **デバイスの IP は DHCP で変わる**（実績: 電源入れ直しで .76 → .66）。`overlay/scripts/stackchan-ip.sh` が `overlay/mods/breath/dev/beacon.js`（UDP ブロードキャスト、port 8687、10 秒周期）を受信して自動発見するため、**DHCP 予約は不要**。`overlay/scripts/ota-deploy.sh` もホスト省略時はこれで自動発見する。ビーコンが届かない場合のみ `logs.sh` を起動して電源投入し、UDP ブートトレースの送信元 IP で特定する
 - 「デバイスに繋がらない」= クラッシュとは限らない。**まず電源と IP を疑う**（今回の実例: 電源オフ + IP 変更を abort と誤認しかけた）
 
 ---
