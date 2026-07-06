@@ -19,6 +19,7 @@
   "modules": {
     "breath/mod": "../../../overlay/mods/breath/mod",
     "status-bar": "../../../overlay/mods/breath/status-bar",
+    "settings-bar": "../../../overlay/mods/breath/settings-bar",
     "breath/dev/trace-udp": "../../../overlay/mods/breath/dev/trace-udp",
     "breath/dev/dev-server": "../../../overlay/mods/breath/dev/dev-server",
     "breath/dev/dev-tools": "../../../overlay/mods/breath/dev/dev-tools"

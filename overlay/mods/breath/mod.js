@@ -1,4 +1,5 @@
 import { attachStatusBar } from 'status-bar'
+import { attachSettingsBar, applySavedSettings } from 'settings-bar'
 import Timer from 'timer'
 import config from 'mc/config'
 import { startDevTools } from 'breath/dev/dev-tools'
@@ -64,6 +65,18 @@ export function onRobotCreated(robot) {
       attachStatusBar(robot)
     } catch (error) {
       trace(`[status-bar] attach failed: ${error}\n`)
+    }
+
+    try {
+      applySavedSettings()
+    } catch (error) {
+      trace(`[settings-bar] applySavedSettings failed: ${error}\n`)
+    }
+
+    try {
+      attachSettingsBar(robot)
+    } catch (error) {
+      trace(`[settings-bar] attach failed: ${error}\n`)
     }
   }, 2000)
 

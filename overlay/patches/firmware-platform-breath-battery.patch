@@ -1,9 +1,9 @@
 diff --git a/firmware/platforms/m5stackchan_cores3/battery-registry.js b/firmware/platforms/m5stackchan_cores3/battery-registry.js
 new file mode 100644
-index 00000000..33991814
+index 00000000..f93b6a78
 --- /dev/null
 +++ b/firmware/platforms/m5stackchan_cores3/battery-registry.js
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,70 @@
 +let powerIO = null;
 +let gaugeEnabled = false;
 +
@@ -49,6 +49,28 @@ index 00000000..33991814
 +		};
 +	} catch (error) {
 +		trace(`[m5stackchan/battery] read failed: ${error}\n`);
++		return null;
++	}
++}
++
++export function setBacklightVoltage(mv) {
++	if (!powerIO) return false;
++	const byte = Math.min(30, Math.max(0, Math.round((mv - 500) / 100)));
++	try {
++		powerIO.writeUint8(0x99, byte);
++		return true;
++	} catch (error) {
++		trace(`[m5stackchan/battery] backlight write failed: ${error}\n`);
++		return false;
++	}
++}
++
++export function getBacklightVoltage() {
++	if (!powerIO) return null;
++	try {
++		return 500 + powerIO.readUint8(0x99) * 100;
++	} catch (error) {
++		trace(`[m5stackchan/battery] backlight read failed: ${error}\n`);
 +		return null;
 +	}
 +}
