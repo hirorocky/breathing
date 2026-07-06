@@ -45,11 +45,11 @@ const MS_PER_MIN = 60000
 const defaults = {
   gaze: {
     enabled: true,
-    meanIntervalMs: 5000, // 視線を動かす平均間隔
-    minIntervalMs: 1200,
-    amplitude: 0.3, // 中心からの最大オフセット(lookAt 座標系、メートル。y に適用、z はさらに GAZE_VERTICAL_SCALE 倍)
-    pixelScale: 6, // 瞳オフセットの描画倍率(px)。renderer パッチの globalThis.breathGazeScale へ反映(upstream 相当は 2)
-    centerBias: 0.45, // この確率で中心(lookAway)に戻す
+    meanIntervalMs: 9000, // 視線を動かす平均間隔(2026-07-07 FB「大きく・速く・まれに」で 5000 → 9000)
+    minIntervalMs: 2500,
+    amplitude: 1, // 中心からの最大オフセット(lookAt 座標系、メートル。y に適用、z はさらに GAZE_VERTICAL_SCALE 倍)
+    pixelScale: 40, // 目全体の平行移動倍率(px)。eye-cozmo の globalThis.breathGazeScale へ反映(B 案は目自体が動くため大きい)
+    centerBias: 0.25, // この確率で中心(正面)に戻す
     settleMs: [300, 1500], // 動かした後の余白(concept の「間」)
   },
   deepBreath: {
@@ -64,6 +64,10 @@ const defaults = {
     meanIntervalMin: 10, // 平均 10 分に 1 回(「沈黙が正しい」— まれ)
     minIntervalMin: 3,
   },
+  face: {
+    pulseDepth: 0.24, // 呼吸による目の脈動深さ(2026-07-07 FB「呼吸の動きを大きく」で 0.14 → 0.24)
+    microDriftPx: 0, // 常時の漂い(2026-07-07 FB「漂いではなくサッカードとして」で 0 = 無効)
+  },
 }
 
 // path (e.g. 'gaze.amplitude') -> [min, max]。setParams / 復元時の安全クランプ。
@@ -71,7 +75,9 @@ const CLAMP_RANGES = {
   'gaze.meanIntervalMs': [50, 10 * MS_PER_MIN],
   'gaze.minIntervalMs': [50, 10 * MS_PER_MIN],
   'gaze.amplitude': [0, 1],
-  'gaze.pixelScale': [1, 20],
+  'gaze.pixelScale': [1, 80],
+  'face.pulseDepth': [0, 0.5],
+  'face.microDriftPx': [0, 8],
   'gaze.centerBias': [0, 1],
   'deepBreath.probPerCycle': [0, 1],
   'deepBreath.scale': [1, 4],
@@ -181,7 +187,9 @@ function clearGazeTimers() {
 function performGazeTick() {
   const cfg = params.gaze
   if (Math.random() < cfg.centerBias) {
-    robotRef.lookAway()
+    // lookAway() は gazePoint=null にするだけで視線値を凍結する(中央に戻らない)ため、
+    // 明示的に正面の点を見る。
+    robotRef.lookAt([GAZE_FORWARD_M, 0, 0])
     trace('[live] gaze center\n')
   } else {
     const y = (Math.random() * 2 - 1) * cfg.amplitude
@@ -262,12 +270,18 @@ function applyGazePixelScale() {
   globalThis.breathGazeScale = params.gaze.pixelScale
 }
 
+function applyFaceParams() {
+  globalThis.breathPulseDepth = params.face.pulseDepth
+  globalThis.breathMicroDrift = params.face.microDriftPx
+}
+
 export function startLiveliness(robot) {
   if (started) return
   started = true
   robotRef = robot
   loadPersistedParams()
   applyGazePixelScale()
+  applyFaceParams()
   scheduleNextGaze()
   scheduleNextMurmur()
   trace('[live] started\n')
@@ -356,6 +370,9 @@ export function setParams(partial) {
     if ('murmur' in partial) {
       clearMurmurTimer()
       scheduleNextMurmur()
+    }
+    if ('face' in partial) {
+      applyFaceParams()
     }
   }
 
