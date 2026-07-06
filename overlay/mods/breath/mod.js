@@ -4,12 +4,15 @@ import Timer from 'timer'
 import config from 'mc/config'
 import { startDevTools } from 'breath/dev/dev-tools'
 import { initCry } from 'breath/cry'
+import { startLiveliness, shouldDeepBreathe, getDeepBreathParams, maybeSighForDeepBreath } from 'breath/liveliness'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
 const EXHALE_SEC = 6
 const MOUTH_INHALE = 0.22
 const MOUTH_EXHALE = 0.04
+// v1.1.0 Phase 2a — 深呼吸(liveliness.deepBreath)の口の開きの絶対上限。
+const MOUTH_DEEP_MAX = 0.35
 
 function jitter(seconds, spread = 0.03) {
   return seconds * (1 + (Math.random() * 2 - 1) * spread)
@@ -30,10 +33,35 @@ async function animateMouth(robot, from, to, durationMs) {
 }
 
 async function runBreathCycle(robot) {
-  const inhale = jitter(INHALE_SEC)
-  const exhale = jitter(EXHALE_SEC)
-  await animateMouth(robot, MOUTH_EXHALE, MOUTH_INHALE, inhale * 1000)
-  await animateMouth(robot, MOUTH_INHALE, MOUTH_EXHALE, exhale * 1000)
+  // v1.1.0 Phase 2a — サイクル頭で liveliness に深呼吸を問い合わせる。
+  // liveliness 側が無効/未起動でも常に false を返す設計のため、通常サイクルの
+  // 挙動(jitter の呼び順・scale=1・peak=MOUTH_INHALE)は 1 ビットも変わらない。
+  let isDeepBreath = false
+  let deepParams = null
+  try {
+    isDeepBreath = shouldDeepBreathe()
+    if (isDeepBreath) deepParams = getDeepBreathParams()
+  } catch (error) {
+    trace(`[breath] liveliness query failed: ${error}\n`)
+    isDeepBreath = false
+  }
+
+  const scale = isDeepBreath ? deepParams.scale : 1
+  const peakMouthOpen = isDeepBreath ? Math.min(MOUTH_INHALE * deepParams.mouthScale, MOUTH_DEEP_MAX) : MOUTH_INHALE
+
+  const inhale = jitter(INHALE_SEC) * scale
+  const exhale = jitter(EXHALE_SEC) * scale
+  await animateMouth(robot, MOUTH_EXHALE, peakMouthOpen, inhale * 1000)
+
+  if (isDeepBreath) {
+    try {
+      maybeSighForDeepBreath()
+    } catch (error) {
+      trace(`[breath] sigh trigger failed: ${error}\n`)
+    }
+  }
+
+  await animateMouth(robot, peakMouthOpen, MOUTH_EXHALE, exhale * 1000)
 }
 
 async function breathLoop(robot) {
@@ -90,8 +118,8 @@ export function onRobotCreated(robot) {
     }
   }, 3000)
 
-  // キャッシュ生成の開始のみ（自動発火はまだ入れない — Phase 2/3 の領分）。
-  // 再生は dev サーバの POST /cry/<name> 経由のみ。
+  // キャッシュ生成の開始のみ。再生は dev サーバの POST /cry/<name>、および
+  // v1.1.0 Phase 2a の liveliness(murmur スケジューラ・深呼吸の sigh)経由。
   Timer.set(() => {
     try {
       initCry()
@@ -99,6 +127,17 @@ export function onRobotCreated(robot) {
       trace(`[cry] init failed: ${error}\n`)
     }
   }, 4000)
+
+  // v1.1.0 Phase 2a — 生存感エンジン(gaze・murmur スケジューラ)を開始する。
+  // 呼吸ループ自体は breathLoop が既に持っており、deepBreath はここでは触れない
+  // (mod.js 側から shouldDeepBreathe() を毎サイクル問い合わせる形)。
+  Timer.set(() => {
+    try {
+      startLiveliness(robot)
+    } catch (error) {
+      trace(`[live] start failed: ${error}\n`)
+    }
+  }, 5000)
 }
 
 export default {

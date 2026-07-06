@@ -11,6 +11,7 @@ import config from 'mc/config'
 import Time from 'time'
 import { readBatterySample } from 'm5stackchan/battery'
 import { CRY_NAMES, getRecipes, playCry, setRecipes } from 'breath/cry'
+import { getParams, setParams, requestDeepBreath, triggerGaze } from 'breath/liveliness'
 
 /**
  * Wi-Fi 開発環境 Phase 1/2 — GET /status・PUT /ota + mDNS（v1.0.1 dev tools）。
@@ -282,6 +283,91 @@ const cryRecipesRoute = {
   },
 }
 
+/**
+ * GET /params・PUT /params(要 x-dev-token)。liveliness(生存感エンジン)のライブパラメータ
+ * (Loop B の心臓部)。本体は小さい JSON なので溜めてから処理する
+ * (cryRecipesRoute と同型)。
+ */
+const paramsRoute = {
+  onRequest(request) {
+    this.method = request.method
+    this.sent = 0
+    this.chunks = []
+
+    if ('GET' === request.method) {
+      try {
+        this.status = 200
+        this.data = ArrayBuffer.fromString(JSON.stringify(getParams()))
+      } catch (error) {
+        trace(`[dev] params build failed: ${error}\n`)
+        this.status = 500
+        this.data = ArrayBuffer.fromString('')
+      }
+    } else if ('PUT' === request.method) {
+      if (!isAuthorized(request)) {
+        this.status = 401
+        this.data = ArrayBuffer.fromString('')
+        trace('[dev] params rejected: bad or missing x-dev-token\n')
+      } else {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      }
+    } else {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] params read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if ('PUT' === this.method && 200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const params = setParams(body)
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: true, params }))
+      } catch (error) {
+        trace(`[dev] params update failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] params connection error: ${message}\n`)
+  },
+}
+
 /** POST /cry/<name>。キャッシュ済みバッファを即再生する（Loop A の心臓部）。 */
 function makeCryPlayRoute(name) {
   return {
@@ -332,19 +418,79 @@ function makeCryPlayRoute(name) {
   }
 }
 
+/** POST /live/<action>。生存感エンジンのチューニング用即時トリガ(Loop B 用)。 */
+function makeLiveActionRoute(name, action) {
+  return {
+    onRequest(request) {
+      this.sent = 0
+      if ('POST' !== request.method) {
+        this.status = 405
+        this.data = ArrayBuffer.fromString('')
+        return
+      }
+      try {
+        const ok = action()
+        this.status = ok ? 200 : 503
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok, action: name }))
+      } catch (error) {
+        trace(`[dev] live action failed: ${error}\n`)
+        this.status = 500
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, action: name, error: String(error) }))
+      }
+    },
+    onReadable(count) {
+      try {
+        this.read(count)
+      } catch (_error) {
+        // 握りつぶす。
+      }
+    },
+    onResponse(response) {
+      response.status = this.status
+      response.headers.set('content-type', 'application/json')
+      response.headers.set('content-length', this.data.byteLength)
+      this.respond(response)
+    },
+    onWritable(count) {
+      const remaining = this.data.byteLength - this.sent
+      if (remaining <= 0) {
+        this.write()
+        return
+      }
+      const use = Math.min(count, remaining)
+      this.write(new Uint8Array(this.data, this.sent, use))
+      this.sent += use
+    },
+    onError(message) {
+      trace(`[dev] live action connection error: ${message}\n`)
+    },
+  }
+}
+
+const LIVE_ACTIONS = {
+  'deep-breath': requestDeepBreath, // 次の呼吸サイクルを深呼吸に(発動まで最大 ~10s)
+  gaze: triggerGaze, // 視線イベントを即時発火
+}
+
 const router = new Map([
   ['/status', statusRoute],
   ['/ota', otaRoute],
   ['/cry/recipes', cryRecipesRoute],
+  ['/params', paramsRoute],
 ])
 
 const CRY_PLAY_PREFIX = '/cry/'
+const LIVE_ACTION_PREFIX = '/live/'
 
 function resolveRoute(path) {
   if (router.has(path)) return router.get(path)
   if (path.startsWith(CRY_PLAY_PREFIX)) {
     const name = path.slice(CRY_PLAY_PREFIX.length)
     if (CRY_NAMES.includes(name)) return makeCryPlayRoute(name)
+  }
+  if (path.startsWith(LIVE_ACTION_PREFIX)) {
+    const name = path.slice(LIVE_ACTION_PREFIX.length)
+    if (name in LIVE_ACTIONS) return makeLiveActionRoute(name, LIVE_ACTIONS[name])
   }
   return notFound
 }

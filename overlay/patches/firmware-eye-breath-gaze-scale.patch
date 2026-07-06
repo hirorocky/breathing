@@ -1,0 +1,21 @@
+diff --git a/firmware/stackchan/renderers-piu/parts/eye.ts b/firmware/stackchan/renderers-piu/parts/eye.ts
+index 17866bc9..47104eee 100644
+--- a/firmware/stackchan/renderers-piu/parts/eye.ts
++++ b/firmware/stackchan/renderers-piu/parts/eye.ts
+@@ -175,8 +175,14 @@ export const Eye = Container.template((opts: EyeOptions) => {
+       lastGazeY = NaN
+       onFaceContext(_container: PiuContainer, face: FaceContext) {
+         const eye = face.eyes[opts.side]
+-        const offsetX = (eye.gazeX ?? 0) * 2
+-        const offsetY = (eye.gazeY ?? 0) * 2
++        // breath MOD: 瞳オフセット倍率を実行時に調整可能にする(既定 2 = upstream 相当)。
++        // コンテナは clip: true なので、瞳が消えないよう幾何ベースでクランプする —
++        // 完全に収まる範囲 + 半径の半分までの食み出し(横目)を上限とする。
++        const gazeScale = (globalThis as { breathGazeScale?: number }).breathGazeScale ?? 2
++        const maxOffsetX = (width - diameter) / 2 + radius * 0.5
++        const maxOffsetY = (height - diameter) / 2 + radius * 0.5
++        const offsetX = Math.max(-maxOffsetX, Math.min(maxOffsetX, (eye.gazeX ?? 0) * gazeScale))
++        const offsetY = Math.max(-maxOffsetY, Math.min(maxOffsetY, (eye.gazeY ?? 0) * gazeScale))
+         if (offsetX === this.lastGazeX && offsetY === this.lastGazeY) return
+         this.lastGazeX = offsetX
+         this.lastGazeY = offsetY
