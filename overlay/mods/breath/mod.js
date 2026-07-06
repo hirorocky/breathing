@@ -3,6 +3,7 @@ import { attachSettingsBar, applySavedSettings } from 'settings-bar'
 import Timer from 'timer'
 import config from 'mc/config'
 import { startDevTools } from 'breath/dev/dev-tools'
+import { initCry } from 'breath/cry'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
@@ -88,6 +89,16 @@ export function onRobotCreated(robot) {
       trace(`[dev] start failed: ${error}\n`)
     }
   }, 3000)
+
+  // キャッシュ生成の開始のみ（自動発火はまだ入れない — Phase 2/3 の領分）。
+  // 再生は dev サーバの POST /cry/<name> 経由のみ。
+  Timer.set(() => {
+    try {
+      initCry()
+    } catch (error) {
+      trace(`[cry] init failed: ${error}\n`)
+    }
+  }, 4000)
 }
 
 export default {

@@ -10,6 +10,7 @@ import Net from 'net'
 import config from 'mc/config'
 import Time from 'time'
 import { readBatterySample } from 'm5stackchan/battery'
+import { CRY_NAMES, getRecipes, playCry, setRecipes } from 'breath/cry'
 
 /**
  * Wi-Fi 開発環境 Phase 1/2 — GET /status・PUT /ota + mDNS（v1.0.1 dev tools）。
@@ -200,10 +201,153 @@ const otaRoute = {
   },
 }
 
+/** GET /cry/recipes・PUT /cry/recipes（要 x-dev-token）。本体は小さい JSON なので溜めてから処理する。 */
+const cryRecipesRoute = {
+  onRequest(request) {
+    this.method = request.method
+    this.sent = 0
+    this.chunks = []
+
+    if ('GET' === request.method) {
+      try {
+        this.status = 200
+        this.data = ArrayBuffer.fromString(JSON.stringify(getRecipes()))
+      } catch (error) {
+        trace(`[dev] cry recipes build failed: ${error}\n`)
+        this.status = 500
+        this.data = ArrayBuffer.fromString('')
+      }
+    } else if ('PUT' === request.method) {
+      if (!isAuthorized(request)) {
+        this.status = 401
+        this.data = ArrayBuffer.fromString('')
+        trace('[dev] cry recipes rejected: bad or missing x-dev-token\n')
+      } else {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      }
+    } else {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    // 認証失敗時も含め、必ず読み切って state machine を進める（otaRoute と同じ理由）。
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] cry recipes read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if ('PUT' === this.method && 200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const updated = setRecipes(body)
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: true, updated }))
+      } catch (error) {
+        trace(`[dev] cry recipes update failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] cry recipes connection error: ${message}\n`)
+  },
+}
+
+/** POST /cry/<name>。キャッシュ済みバッファを即再生する（Loop A の心臓部）。 */
+function makeCryPlayRoute(name) {
+  return {
+    onRequest(request) {
+      this.sent = 0
+      if ('POST' !== request.method) {
+        this.status = 405
+        this.data = ArrayBuffer.fromString('')
+        return
+      }
+      try {
+        const result = playCry(name)
+        this.status = result.ok ? 200 : 503
+        this.data = ArrayBuffer.fromString(JSON.stringify(result))
+      } catch (error) {
+        trace(`[dev] cry play failed: ${error}\n`)
+        this.status = 500
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, name, error: String(error) }))
+      }
+    },
+    onReadable(count) {
+      // body は想定しないが、送られてきても読み切ってハングを避ける。
+      try {
+        this.read(count)
+      } catch (_error) {
+        // 握りつぶす。
+      }
+    },
+    onResponse(response) {
+      response.status = this.status
+      response.headers.set('content-type', 'application/json')
+      response.headers.set('content-length', this.data.byteLength)
+      this.respond(response)
+    },
+    onWritable(count) {
+      const remaining = this.data.byteLength - this.sent
+      if (remaining <= 0) {
+        this.write()
+        return
+      }
+      const use = Math.min(count, remaining)
+      this.write(new Uint8Array(this.data, this.sent, use))
+      this.sent += use
+    },
+    onError(message) {
+      trace(`[dev] cry play connection error: ${message}\n`)
+    },
+  }
+}
+
 const router = new Map([
   ['/status', statusRoute],
   ['/ota', otaRoute],
+  ['/cry/recipes', cryRecipesRoute],
 ])
+
+const CRY_PLAY_PREFIX = '/cry/'
+
+function resolveRoute(path) {
+  if (router.has(path)) return router.get(path)
+  if (path.startsWith(CRY_PLAY_PREFIX)) {
+    const name = path.slice(CRY_PLAY_PREFIX.length)
+    if (CRY_NAMES.includes(name)) return makeCryPlayRoute(name)
+  }
+  return notFound
+}
 
 function startHttpServer(port) {
   new HTTPServer({
@@ -212,7 +356,7 @@ function startHttpServer(port) {
     onConnect(connection) {
       connection.accept({
         onRequest(request) {
-          this.route = router.get(request.path) ?? notFound
+          this.route = resolveRoute(request.path)
         },
         onError(message) {
           trace(`[dev] connection error before routing: ${message}\n`)

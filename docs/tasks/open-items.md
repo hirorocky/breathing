@@ -85,12 +85,21 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
 
 ### Phase 0 — 技術調査（Sonnet に委譲）
 
-- [ ] **JS サンプル合成の実測**: XS 上で 8k/16kHz のサイン + ノイズ + エンベロープを何 ms で何サンプル生成できるか（フォールバック階段のどこに立てるかの判定材料）
-- [ ] **AudioOut への生バッファ供給経路**: mod から ArrayBuffer（RawSamples 相当）を enqueue する API、`AudioOut.Tone`/`Volume` コマンド列の仕様、robot.tone の音声基盤（AudioOut インスタンス）を再利用できるか（起動音の AudioOut と二重にならないか）
-- [ ] マイク入力: Moddable での CoreS3 マイク（ES7210）サンプリング API とレベル検知の実現性
-- [ ] renderer: まばたき・視線（目の位置）の操作 API の有無（simple-face の自動まばたき仕様含む）
-- [ ] サーボ: 呼吸連動の最小駆動と騒音の実態（`setTorque` WDT 問題の再確認含む）
-- [ ] IMU・LED の API 確認
+- [x] **JS サンプル合成の実測**: XS 上で 8k/16kHz のサイン + ノイズ + エンベロープを何 ms で何サンプル生成できるか（フォールバック階段のどこに立てるかの判定材料）
+- [x] **AudioOut への生バッファ供給経路**: mod から ArrayBuffer（RawSamples 相当）を enqueue する API、`AudioOut.Tone`/`Volume` コマンド列の仕様、robot.tone の音声基盤（AudioOut インスタンス）を再利用できるか（起動音の AudioOut と二重にならないか）
+- [x] マイク入力: Moddable での CoreS3 マイク（ES7210）サンプリング API とレベル検知の実現性
+- [x] renderer: まばたき・視線（目の位置）の操作 API の有無（simple-face の自動まばたき仕様含む）
+- [x] サーボ: 呼吸連動の最小駆動と騒音の実態（`setTorque` WDT 問題の再確認含む）
+- [x] IMU・LED の API 確認
+
+#### 調査結果（2026-07-06）
+
+- **ベンチ実測**: `Math.sin` 直呼び 812ms/4096 サンプル（198µs/サンプル、リアルタイムの約 1.6 倍遅）。**サインテーブルは XS では逆に 28% 遅い**（直呼び採用）。分割 generate-ahead（64 サンプル≈13ms/チャンク）で呼吸を止めずに生成可能。反応系は「常時 1 変奏キャッシュ」で即時再生
+- **AudioOut**: `robot.tone` は呼び出しごとに AudioOut を生成/クローズし再利用不可。I2S1 TX は 1 チャネルのみ → cry.js が自前 AudioOut を持ち、robot.tone と排他。`embedded:io/audio/out` 経路はアンプのサンプルレート同期を正しく行う（旧 pins/audioout はバイパスするので注意）
+- **マイク**: `robot.microphone`（AudioIn 16kHz）が既に生成済み。スピーカー TX と RX は同時使用可
+- **表情**: 自動まばたきは**既に動作中**。サッカードは実装済み・コメントアウト（`face.ts:57`）— 有効化はオーバーレイパッチのみ。lookAt/lookAway はサーボ不要。renderer 内部に独自の 6 秒周期ボブ（breath フィールド）があり mod の 10 秒呼吸と非同期な点は深呼吸設計時に要整合
+- **サーボ**: `main.ts` の `breathHostMod ? 'none'` ハードゲートのためパッチ必須。setTorque WDT は静的に再現せず実機再検証が必要
+- **IMU・LED**: `robot.imu` 生成済み、'shake' 等の動き分類 API が既製。LED は PY32 実ドライバあり、`robot.led.head` 生成済みのはず
 
 ### Phase 1 — 鳴き声パイプライン（Loop A 開通）
 

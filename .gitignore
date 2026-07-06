@@ -8,3 +8,4 @@
 # stack-chan submodule のビルド成果物（念のため）
 stack-chan/firmware/node_modules
 stack-chan/web/node_modules
+__pycache__/

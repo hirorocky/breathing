@@ -3,6 +3,7 @@
   "modules": {
     "status-bar": "./status-bar",
     "touch-debug": "./touch-debug",
+    "breath/cry": "./cry",
     "*": "./mod"
   }
 }
