@@ -156,7 +156,12 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
 
 ### Phase 3 — 微反応（Loop C 開通）
 
-- [ ] **3a マイク観測基盤**: `overlay/mods/breath/mic.js`（`robot.microphone` から連続レベル解析）+ マイクレベルの UDP ストリーム + `GET /mic`（現在レベル・状態・直近イベント）。**デバイスの振る舞いは変えない**（観測のみ、部屋の実レベルで閾値を校正する）
+- [x] **3a マイク観測基盤**: `overlay/mods/breath/mic.js`（`robot.microphone` から連続レベル解析）+ マイクレベルの UDP ストリーム（port 8688、`overlay/scripts/mic-monitor.sh` で受信）+ `GET /mic` / `PUT /mic/params`。**デバイスの振る舞いは変えない**（観測のみ）。2026-07-07 実機開通:
+  - `robot.microphone.onReadable` の `this` は素の AudioIn（lip_sync と同型）。レベルはネイティブ `level()`（バッファ全体の平均絶対値。RMS 代替）、ピークは 4 サンプル間引きの JS 走査
+  - 静かな部屋の実測: rms 25〜126（典型 50〜80）、peak 80〜530（典型 200〜300）
+  - 処理コスト avgProcUs ≈ 5000〜7000µs / 100ms 窓（CPU ~5〜7%）。呼吸・視線・cry への影響なし（4 分観察で abort・再起動なし）
+  - **onReadable の到着間隔は 150〜600ms と揺れる**（厳密な 100ms 周期ではない）— 3b の閾値・アタック検出はこの粒度を前提に設計する
+  - 汎用化した `overlay/mods/breath/param-store.js`（mergeValidated / clamp / Preference 永続化）を新設。liveliness.js の同パターン移行は別の機会（動作中コードに触らない）
 - [ ] **3b イベント化**: loud / clap / voice / silence の検出 + 自己音ゲート + `PUT /mic/params` ライブ調整。イベントは trace のみ（拍手・発話・無音をユーザーが演じ、UDP ログで判別精度を確認する Loop C）
 - [ ] **3c 総合的な動きの作り込み**: 顔・音・サーボを組み合わせた反応を**一つずつ**（例: 大きな音 → startle 鳴き + まばたき + 呼吸一拍止め。「間」の原則 = 反応まで 300ms〜1.5s の余白）
 - [ ] 頭頂タッチの微反応
