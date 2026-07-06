@@ -1,83 +1,127 @@
-# v1.0.2 — 設定バー（明るさ・音量）
+# v1.1.0 — 生き物の気配（鳴き声・微挙動・微反応）
 
-**v1.0.1**（開発環境・ステータスバー・Wi‑Fi OTA、tag `v1.0.1`）の続き。**探求の Layer 0 は維持**しつつ、UI に明るさ・音量の設定バーを追加する。
+**v1.0.2**（設定バー、tag `v1.0.2`）の次。StackChan を「生き物っぽく」する — ただしペットのような能動的な芝居ではなく、**そこに生きている気配**として。最終的に同室 2〜10 人の同席観察（`docs/concept-v1/01-purpose.md` の本題）で確かめる。
 
-参照: [journal/v1.0.0.md](../journal/v1.0.0.md) · [overlay/mods/breath/](../../overlay/mods/breath/)。Wi‑Fi OTA の詳細は `CLAUDE.md` の「Wi‑Fi OTA デプロイ（Phase 2）」節を参照（v1.0.1 で完了・変更なし）。
+参照: [concept-v1/03-interactions.md](../concept-v1/03-interactions.md)（Layer 設計・原則） · [journal/v1.0.0.md](../journal/v1.0.0.md)
 
 ---
 
-## この版の骨核
+## 設計ガードレール（concept-v1 から）
 
-| 項目 | v1.0.2 でやること |
+| 原則 | この版での意味 |
 |---|---|
-| **探求** | v1.0.1 と同じ（顔のみ呼吸。サーボ停止） |
-| **UI** | 画面下端から上スワイプで **設定バー**（明るさ・音量、+/− ボタン）。通常時は非表示 |
-| **開発** | Wi‑Fi OTA（`overlay/scripts/ota-deploy.sh`）で反復開発。USB は未使用（v1.0.1 Phase 2 で完了済み） |
+| 稀で・弱く | 鳴き声・ランダム挙動は「沈黙が正しい」を既定に。頻度と強さは FB ループの主チューニング軸 |
+| 非指示・第三焦点 | 音や動きで「こっちを見ろ」と要求しない。返答・会話はしない |
+| 間 | 反応には 300ms〜1.5s の余白。即時反応は機械っぽさ・攻撃性になる |
+| 非線形 | 挙動の間隔は固定周期にしない（ポアソン的なランダム） |
 
-Layer 0 の同席観察（v1.1.0）はこの版の外。
+### concept との緊張点（明示して観察で判定する）
 
----
-
-## 1. 設定バー（明るさ・音量）
-
-### 要件
-
-- **操作**: 画面下端（y ≧ 160、height 80 の透明ゾーン）から **上方向スワイプ ≥40px** → バー表示。表示中に **下スワイプ** または **8 秒操作なし** で自動非表示（ボタン操作でタイマーリセット）
-- **対称性**: 既存 status-bar（画面上端 0〜80px・下スワイプで表示）と操作方向・ゾーンとも対称。上端/下端で y 範囲が重ならないため競合しない。下スワイプゾーン（透明、height 80）と可視バー（height 72）は兄弟として分離し、可視バー自体には `backgroundTouch` を付けず、個々のボタンだけ `active: true` にする
-- **トーン**: **白背景・黒文字**（黒背景・白前景の顔と区別するため、あえて反転。status-bar と同じ意図）。上辺 1px ボーダー（`#cccccc`）
-- **表示（2 行）**:
-  - 明るさ行: ラベル + `[-]` + レベル表示 `n/8` + `[+]`（**1〜8 の 8 段階**）
-  - 音量行: ラベル + `[-]` + レベル表示 `n/8` + `[+]`（**0〜8 の 9 段階**）
-- **永続化**: `Preference`（domain `breath`、key `backlightMv` / `ampVolume`）。起動時（`applySavedSettings()`）に保存値を再適用
-- **既知の制約**: 音量変更は**起動音そのものには当日反映されない**（起動音は setup フェーズで再生済みのため、次回起動時から反映）
-- **フォント**: status-bar と同じ `20px Open Sans`。ビットマップフォント資産（`OpenSans-Regular-20`）は ASCII (0x20–0x7e) のみを内包しており日本語グリフが無いため、「明るさ」「音量」ラベルは表示できない → **`BRT` / `VOL` にフォールバック**（ビルド前に `.fnt` を調査して確定。実装済み）
-
-### 技術メモ
-
-| 要素 | API / 実装 |
-|---|---|
-| 明るさ制御 | AXP2101 DLDO1 電圧レジスタ **0x99**（値 = (mV−500)/100、5bit 0〜30）。`m5stackchan/battery` の `setBacklightVoltage(mv)` / `getBacklightVoltage()`（`battery-registry.js` に追加、`firmware-platform-breath-battery.patch` へ反映済み） |
-| 死んでいる API（使用禁止） | SDK の `power.brightness` / `Host.Backlight` は Power クラスに setter が無く**何もしない**。Moddable AXP2101 ドライバの `LDO.voltage` セッターは引数順バグで常に最小値を書くため使用禁止 |
-| 音量制御 | `globalThis.amp.volume = 0..256`（SDK AW88298 セッター、バグなし・即時反映・I2C 0x36 で衝突なし）。getter もある |
-| 聴覚フィードバック | 音量変更時に `robot.tone(880, 80, 0.5)` を発火（try/catch + Promise 拒否も個別に捕獲。失敗しても値の変更自体は継続） |
-| 永続化 | `import Preference from 'preference'` を overlay 側（`settings-bar.js`）から直接使用。`preference` モジュールは `utilities/manifest_utility.json` 経由で既にホストビルドに含まれている（追加の manifest 変更は不要と確認済み） |
-
-### タスク
-
-- [x] `battery-registry.js` に `setBacklightVoltage` / `getBacklightVoltage` を追加
-- [x] `overlay/patches/firmware-platform-breath-battery.patch` を再生成し、全パッチの forward apply（クリーンな submodule チェックアウト）・reverse-apply-check を確認
-- [x] `overlay/mods/breath/settings-bar.js` 実装（下スワイプ検知・2 行 UI・Preference 永続化・ビープ・`attachSettingsBar` / `applySavedSettings` を export）
-- [x] `overlay/mods/breath/mod.js` に `applySavedSettings()` → `attachSettingsBar(robot)` を（`attachStatusBar` と同じ 2s Timer 内で）接続
-- [x] `manifest_breath_deploy.json` に `settings-bar` を登録し、submodule 側コピーへ同期
-- [x] ビルド成功（`build:breath:m5stackchan-cores3`）・Wi‑Fi OTA デプロイ成功（`ota-deploy.sh`、buildId 一致・`/status` 生存確認）
-- [x] 実機: 下端スワイプで設定バーが表示/非表示・自動非表示（2026-07-06 ユーザー確認 + UDP トレースで裏取り）
-- [x] 実機: 明るさ `[-]`/`[+]` で画面の明るさが変化（2026-07-06 ユーザー確認）
-- [x] 実機: 音量 `[-]`/`[+]` で音量とビープ音が変化（2026-07-06 ユーザー確認）
-- [ ] 実機: 再起動後も明るさ・音量の設定が保持されること（次回の電源断/OTA の際に設定バーの値を見れば受動的に確認できる）
-
-### 運用メモ（2026-07-06）
-
-- **デバイスの IP は DHCP で変わる**（実績: 電源入れ直しで .76 → .66）。`overlay/scripts/stackchan-ip.sh` が `overlay/mods/breath/dev/beacon.js`（UDP ブロードキャスト、port 8687、10 秒周期）を受信して自動発見するため、**DHCP 予約は不要**。`overlay/scripts/ota-deploy.sh` もホスト省略時はこれで自動発見する。ビーコンが届かない場合のみ `logs.sh` を起動して電源投入し、UDP ブートトレースの送信元 IP で特定する
-- 「デバイスに繋がらない」= クラッシュとは限らない。**まず電源と IP を疑う**（今回の実例: 電源オフ + IP 変更を abort と誤認しかけた）
+1. **スピーカー**: 現指針は「原則ミュート」。鳴き声は *soft/short/rare* の設計でこれに挑戦する実験。存在負荷が上がるなら音量 0 に戻せる（v1.0.2 の設定バーで即時調整可）
+2. **マイク**: 現指針は OFF（AI Agent 文脈）。禁止されているのは音声 Q&A・ウェイクワードであり、「大きな音にびくっとする」受動的な気配は別物として試す
+3. **カメラ（目の前のもの検知）**: 指針が明示的に「監視・評価感を避ける」としており、**初期スコープから外す**。「気づいてる感」は音・タッチ・IMU で近似し、カメラはユーザー判断の保留実験とする
 
 ---
 
-## Phase 3 — 堅牢化（任意）
+## フィードバックループの設計（この版の作り方そのもの）
 
-- [ ] ESP-IDF ロールバック: sdkconfig `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` + 起動確認後の mark-valid（SDK に既製実装なし、FFI で自作）
-- [ ] trace リングバッファ + `GET /logs`（UDP 取りこぼし時の追い読み）
-- [ ] OTA 書込中は呼吸アニメーションを一時停止（フラッシュ書込と描画の負荷分離）
+### Loop A — 鳴き声（実機スピーカー上・秒単位で回す）
+
+**方針: 音は静的ファイルではなく「レシピ（パラメータ JSON）」。鳴くたびにデバイス内で合成し、毎回微小なゆらぎを乗せる**（同じ murmur は二度と鳴らない — 非線形原則を音にも適用）。
+
+```
+Claude: レシピ JSON を PUT /cry/params で実機へ → POST /cry/<name> で試し鳴き
+ユーザー: 実機スピーカーの音をその場で聴いて FB（もっと柔らかく・短く・低く…）
+→ 確定レシピ: Preference / manifest 既定値化 → コミット
+```
+
+- **デバイス側シンセ**（`overlay/mods/breath/cry.js`）: サイン波 + フィルタ付きノイズ + エンベロープの最小トポロジー。レシピ = 基本周波数・ピッチカーブ・ビブラート・倍音・ノイズ比・エンベロープ・長さ + **ゆらぎ幅**（再生ごとに各パラメータへ乗せるランダム量）
+- **再生前バッファ生成**（generate-ahead）: サンプル列は鳴く直前ではなくアイドル時に事前計算してキャッシュし、呼吸アニメーションをブロックしない。鳴いたら次の変奏を裏で生成
+- **Mac プロトタイプ**（`overlay/tools/cry/synth.py`、標準ライブラリのみ）は**シンセのトポロジー設計にだけ**使う（アルゴリズム探索は afplay の方が速い）。音作りの本番ループは実機上
+- OTA が必要なのはシンセエンジン自体の変更時のみ。レシピ調整は OTA 不要
+- 却下した代替: 静的 MAUD リソース（毎回同一で機械的・反復に OTA 必須）、効果音素材、TTS 由来
+- **JS 合成の速度リスク**: XS でのサンプル計算コストは Phase 0 で実測。フォールバック階段: 16kHz → 8kHz → AudioOut の Tone コマンド列（ピッチ輪郭のみネイティブ生成）+ 短いノイズバッファ → 最終手段は「事前計算した N 変奏からランダム選択」
+- 音のボキャブラリー初期案（少数から始める）:
+
+| 名前 | 場面 | キャラクター |
+|---|---|---|
+| murmur | アイドル中ごくまれに | 寝息・小さな「くぅ」。気づかない人がいてよい音量 |
+| sigh | 深呼吸（下記）に連動 | 吐息。トーンというより空気 |
+| startle | 大きな音への微反応 | 短い「びくっ」。かわいさより反射 |
+| touch | 頭頂タッチへの応答 | 一番柔らかい音。返事ではなく気配 |
+
+### Loop B — 微挙動（実機・リアルタイムで回す）
+
+```
+Claude: dev サーバの PUT /params で頻度・振幅・間隔をライブ変更（デプロイ不要）
+ユーザー: 実機を眺めて FB（多すぎる・気づかない・機械っぽい…）
+→ 確定値: Preference / manifest 既定値化 → コミット
+```
+
+- **生存感エンジン**（idle scheduler）: ポアソン的間隔で微挙動を発火。候補:
+  - **まばたき**（renderer 標準の自動まばたきの有無を Phase 0 で確認。あれば揺らぎだけ足す）
+  - **視線の微小な揺らぎ**（サッカード。X 首振りは指示になるため目だけ）
+  - **深呼吸**（たまに 1 回だけ深い周期 + sigh。既存の jitter とは別レイヤ）
+  - **姿勢の微動**（サーボ復活の実験 — SCS0009 の駆動音が気配を壊すかが論点。v1.1.0 の宿題「サーボ・LED の取捨」をここで判定）
+  - **LED の微弱な明滅**（12 連 LED。呼吸連動の弱い明度変化）
+- パラメータ API: dev サーバに `GET/PUT /params`（JSON、Preference 永続化）。**これが Loop B の心臓部**
+
+### Loop C — 微反応（センサー・閾値をライブ調整）
+
+```
+デバイス: センサー値を UDP ログへストリーム（logs.sh で Claude が観測）
+ユーザー: 手を叩く・触るなどの刺激役
+Claude: 閾値・反応強度を PUT /params でライブ調整
+```
+
+- **音（マイク）**: レベル検知 → startle（まばたき + 呼吸一拍止め + 小さな声）。反応は稀・弱・debounce 長め
+- **頭頂タッチ**: Layer 3 既定義の微反応（表情のわずかな変化 or 深呼吸 1 回）
+- **IMU（持ち上げ・揺れ）**: 指針は「反応オフ既定候補」。弱い反応を試すかは FB で決める
+- ~~カメラ~~（保留 — 上記緊張点 3）
 
 ---
 
-## v1.1.0 以降（探求・変更なし）
+## Phase 計画
 
-- [ ] 同室 2〜10 人で同席観察
-- [ ] **人間でも Web でもないロボット** としての第三焦点
-- [ ] サーボ・LED の取捨（同室観察後）
+### Phase 0 — 技術調査（Sonnet に委譲）
+
+- [ ] **JS サンプル合成の実測**: XS 上で 8k/16kHz のサイン + ノイズ + エンベロープを何 ms で何サンプル生成できるか（フォールバック階段のどこに立てるかの判定材料）
+- [ ] **AudioOut への生バッファ供給経路**: mod から ArrayBuffer（RawSamples 相当）を enqueue する API、`AudioOut.Tone`/`Volume` コマンド列の仕様、robot.tone の音声基盤（AudioOut インスタンス）を再利用できるか（起動音の AudioOut と二重にならないか）
+- [ ] マイク入力: Moddable での CoreS3 マイク（ES7210）サンプリング API とレベル検知の実現性
+- [ ] renderer: まばたき・視線（目の位置）の操作 API の有無（simple-face の自動まばたき仕様含む）
+- [ ] サーボ: 呼吸連動の最小駆動と騒音の実態（`setTorque` WDT 問題の再確認含む）
+- [ ] IMU・LED の API 確認
+
+### Phase 1 — 鳴き声パイプライン（Loop A 開通）
+
+- [ ] `overlay/tools/cry/synth.py` でシンセトポロジーを確定（Mac 上で私が afplay 試聴しながらアルゴリズム探索 → ユーザーと方向性だけ合意）
+- [ ] デバイス側シンセ `overlay/mods/breath/cry.js`（レシピ実行 + ゆらぎ + generate-ahead キャッシュ）
+- [ ] dev サーバに `PUT /cry/params`・`POST /cry/<name>`（試し鳴き）を追加
+- [ ] murmur と sigh の 2 レシピを **実機上の Loop A** で作り込む（毎回のゆらぎ幅も含めて）
+
+### Phase 2 — 生存感エンジン（Loop B 開通）
+
+- [ ] idle scheduler 実装（まばたき揺らぎ・視線・深呼吸から開始）
+- [ ] dev サーバ `GET/PUT /params`（JSON・Preference 永続化）
+- [ ] ユーザーと Loop B を回してパラメータ確定 → 既定値化
+- [ ] サーボ・LED の ON 実験（駆動音・光の主張が気配を壊さないか）
+
+### Phase 3 — 微反応（Loop C 開通）
+
+- [ ] マイクレベルの UDP ストリーム + startle 反応 + 閾値ライブ調整
+- [ ] 頭頂タッチの微反応
+- [ ] IMU 反応の試行（オフ既定）
+
+### Phase 4 — 統合と同席観察
+
+- [ ] 全要素の頻度バランス最終調整（「沈黙が正しい」に照らす）
+- [ ] 同室 2〜10 人での同席観察
+- [ ] journal（`/write-journal`、ユーザー口述）
+- [ ] tag `v1.1.0`
 
 ---
 
-## journal
+## 積み残し（v1.0.x から）
 
-- [ ] journal は **開発効率の観察** があれば `/write-journal`（探求の Layer 0 観察は v1.1.0）
+- [ ] v1.0.2: 再起動後の明るさ・音量保持の受動確認（次回電源断時に設定バーを見るだけ）
+- [ ] 開発環境 Phase 3（任意）: OTA ロールバック / trace リングバッファ + `GET /logs` / OTA 中の呼吸停止
