@@ -44,6 +44,16 @@ const PROC_US_EMA_ALPHA = 0.2 // avgProcUs の指数移動平均の重み
 const STREAM_HOST = '255.255.255.255' // グローバルブロードキャスト固定(サブネット仮定は禁止 — ERR_MEM 再起動ループの実績)
 const STREAM_PORT = 8688
 
+// v1.1.0 Phase 3a 追記 — cry ↔ mic ハンドシェイク + ゼロ・ストール・ウォッチドッグ。
+// CoreS3 はスピーカー(AW88298/AudioOut)とマイク(ES7210/AudioIn)が I2S クロック
+// ピン(BCK/LR)を共有しており、AudioOut を open している間 AudioIn の入力が
+// 全ゼロになり、close しても自然復旧しない(capture の stop/start でのみ復活する)。
+// cry.js は再生の前後で suspendCapture()/resumeCapture() を呼んでこれを避ける。
+// このウォッチドッグは cry.js が想定していない未知の TX 利用者(将来の機能)への
+// 保険 — running 中に rms/peak が 0 の窓が連続したら capture を再起動する。
+const ZERO_STREAK_THRESHOLD = 15 // 連続ゼロ窓(100ms 窓 x 15 ≈ 1.5秒)で再起動を試みる
+const ZERO_RESTART_MIN_INTERVAL_MS = 10000 // 再起動の最短間隔(マイク物理故障時の無限リスタート防止)
+
 const defaults = {
   enabled: true,
   stream: {
@@ -60,9 +70,13 @@ const CLAMP_RANGES = {
 let params = deepClone(defaults)
 let started = false
 let running = false
+let suspended = false // cry.js の再生中は true(suspendCapture〜resumeCapture の間)
 let micRef = null
 let socket = null
 let streamTimerId = null
+
+let zeroStreak = 0
+let lastZeroRestartTicks = -Infinity
 
 let lastWindow = { t: 0, rms: 0, peak: 0 }
 const ring = []
@@ -139,7 +153,56 @@ function closeWindow(now) {
     avgProcUsEma = avgProcUsEma == null ? avgUsThisWindow : avgProcUsEma + PROC_US_EMA_ALPHA * (avgUsThisWindow - avgProcUsEma)
   }
 
+  checkZeroStall(now)
+
   resetWindowAccumulators(now)
+}
+
+// ---------------------------------------------------------------------------
+// ゼロ・ストール・ウォッチドッグ(closeWindow から呼ぶ。running 中のみ到達する
+// — handleReadable が !running で早期 return するため、suspended 中は
+// closeWindow 自体が呼ばれない。ここでのリセットは保険)
+// ---------------------------------------------------------------------------
+
+function resetZeroStallCounter() {
+  zeroStreak = 0
+}
+
+function checkZeroStall(now) {
+  if (suspended || !running) {
+    zeroStreak = 0
+    return
+  }
+  if (lastWindow.rms === 0 && lastWindow.peak === 0) {
+    zeroStreak++
+  } else {
+    zeroStreak = 0
+    return
+  }
+  if (zeroStreak < ZERO_STREAK_THRESHOLD) return
+  zeroStreak = 0
+  if (now - lastZeroRestartTicks < ZERO_RESTART_MIN_INTERVAL_MS) return
+  lastZeroRestartTicks = now
+  restartCaptureForZeroStall(now)
+}
+
+function restartCaptureForZeroStall(now) {
+  trace('[mic] zero-stall detected, restarting capture\n')
+  if (!micRef) return
+  try {
+    try {
+      micRef.stop()
+    } catch (error) {
+      trace(`[mic] zero-stall stop failed: ${error}\n`)
+    }
+    running = false
+    resetWindowAccumulators(now)
+    micRef.start()
+    running = true
+  } catch (error) {
+    trace(`[mic] zero-stall restart failed: ${error}\n`)
+    running = false
+  }
 }
 
 function maybeCloseWindow() {
@@ -207,6 +270,7 @@ function applyEnabled() {
   if (params.enabled && !running) {
     try {
       resetWindowAccumulators(Time.ticks)
+      resetZeroStallCounter()
       micRef.start()
       running = true
       trace('[mic] capture started\n')
@@ -221,7 +285,60 @@ function applyEnabled() {
       trace(`[mic] stop failed: ${error}\n`)
     }
     running = false
+    resetZeroStallCounter()
     trace('[mic] capture stopped\n')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// cry ↔ mic ハンドシェイク(公開 API の一部だが、applyEnabled と隣接させておく)
+//
+// suspendCapture(): cry.js が AudioOut を open する直前に呼ぶ。capture 中なら
+// stop して suspended フラグを立てる。params.enabled は変更・永続化しない
+// (ユーザー設定とは無関係な一時停止)。
+//
+// resumeCapture(): cry.js が AudioOut を close した後、+500ms 遅らせて呼ぶ。
+// suspended かつ params.enabled の場合のみ capture を再開する。mic 自体が
+// 未初期化(micRef なし)でも安全な no-op。
+// ---------------------------------------------------------------------------
+
+/** cry.js から呼ぶ。再生直前に capture を止める。例外は握って trace のみ。 */
+export function suspendCapture() {
+  try {
+    if (suspended) return
+    suspended = true
+    resetZeroStallCounter()
+    if (!micRef || !running) return
+    try {
+      micRef.stop()
+    } catch (error) {
+      trace(`[mic] suspend stop failed: ${error}\n`)
+    }
+    running = false
+    trace('[mic] capture suspended\n')
+  } catch (error) {
+    trace(`[mic] suspendCapture failed: ${error}\n`)
+  }
+}
+
+/** cry.js から呼ぶ。suspend 前の有効状態に戻す。例外は握って trace のみ。 */
+export function resumeCapture() {
+  try {
+    if (!suspended) return
+    suspended = false
+    if (!micRef || !params.enabled || running) return
+    try {
+      resetWindowAccumulators(Time.ticks)
+      resetZeroStallCounter()
+      micRef.start()
+      running = true
+      trace('[mic] capture resumed\n')
+    } catch (error) {
+      trace(`[mic] resume start failed: ${error}\n`)
+      running = false
+    }
+  } catch (error) {
+    trace(`[mic] resumeCapture failed: ${error}\n`)
   }
 }
 
@@ -260,6 +377,7 @@ export function getMicStatus() {
   return {
     enabled: params.enabled,
     running,
+    suspended,
     t: lastWindow.t,
     rms: lastWindow.rms,
     peak: lastWindow.peak,

@@ -162,8 +162,10 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
   - 処理コスト avgProcUs ≈ 5000〜7000µs / 100ms 窓（CPU ~5〜7%）。呼吸・視線・cry への影響なし（4 分観察で abort・再起動なし）
   - **onReadable の到着間隔は 150〜600ms と揺れる**（厳密な 100ms 周期ではない）— 3b の閾値・アタック検出はこの粒度を前提に設計する
   - 汎用化した `overlay/mods/breath/param-store.js`（mergeValidated / clamp / Preference 永続化）を新設。liveliness.js の同パターン移行は別の機会（動作中コードに触らない）
+  - **ハード制約バグを発見・修正**（2026-07-07 実機特定）: CoreS3 はスピーカー（AW88298/AudioOut）とマイク（ES7210/AudioIn）が I2S クロックピン（BCK=G34/LR=G33）を共有しており、**AudioOut を open した瞬間からマイク入力が全ゼロになり close 後も自然復旧しない**（capture の stop/start でのみ復活）。対処 2 段構え: (1) cry.js が再生前 `suspendCapture()` → close +500ms 後 `resumeCapture()`（全終了経路で resume 保証 + closeDeadline で異常系も保証。自己音ゲートの土台を兼ねる）、(2) mic.js にゼロ・ストール・ウォッチドッグ（ゼロ窓 15 連続 → capture 再起動、最短 10 秒間隔）。murmur ×2 で復旧を実機検証済み
+  - 残課題（3b に同梱）: `settings-bar.js` の音量確認ビープ（`robot.tone`）も同じ問題を起こす（現状はウォッチドッグが数秒で自動復旧させる）。3b デプロイ時に suspend/resume を配線する
 - [ ] **3b イベント化**: loud / clap / voice / silence の検出 + 自己音ゲート + `PUT /mic/params` ライブ調整。イベントは trace のみ（拍手・発話・無音をユーザーが演じ、UDP ログで判別精度を確認する Loop C）
-- [ ] **3c 総合的な動きの作り込み**: 顔・音・サーボを組み合わせた反応を**一つずつ**（例: 大きな音 → startle 鳴き + まばたき + 呼吸一拍止め。「間」の原則 = 反応まで 300ms〜1.5s の余白）
+- [ ] **3c 総合的な動きの作り込み**: 顔・音・サーボを組み合わせた反応を**一つずつ**（例: 大きな音 → startle 鳴き + まばたき + 呼吸一拍止め。「間」の原則 = 反応まで 300ms〜1.5s の余白）。**設計台帳: `docs/tasks/elegnt-expression-design.md`**（ELEGNT の 4 語彙 intention/attention/attitude/emotion × StackChan アセットのマップ、実装順、ガードレール）
 - [ ] 頭頂タッチの微反応
 - [ ] IMU 反応の試行（オフ既定）
 

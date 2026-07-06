@@ -2,6 +2,7 @@ import AudioOut from 'embedded:io/audio/out'
 import Preference from 'preference'
 import Time from 'time'
 import Timer from 'timer'
+import { suspendCapture, resumeCapture } from 'breath/mic'
 
 /**
  * v1.1.0 Loop A — デバイス側鳴き声シンセ（murmur/sigh/startle/touch）。
@@ -542,12 +543,32 @@ function enqueueGeneration(name) {
 const PLAYBACK_CLOSE_MARGIN_MS = 200 // DMA プリロード・Timer 遅延の余裕
 const BYTES_PER_SAMPLE = 2 // bitsPerSample:16, channels:1
 
+// v1.1.0 Phase 3a 追記 — CoreS3 はスピーカー(AudioOut)とマイク(AudioIn)が I2S
+// クロックピン(BCK/LR)を共有しており、AudioOut を open している間 mic 入力が
+// 全ゼロになり close 後も自然復旧しない(実機確認: capture の stop/start でのみ
+// 復活)。そのため open 直前に breath/mic の suspendCapture()、close 後は
+// +500ms 遅らせて resumeCapture() を呼ぶ(残響の尻尾を拾わない後方ゲートも兼ねる)。
+// resume 漏れ = mic 永久停止になるため、全終了経路(正常完了・open 失敗・
+// start 失敗・再生中の例外)で必ず呼ばれるようにしている。
+const MIC_RESUME_DELAY_MS = 500
+// closeOut の「まだ書き切っていない」待機に無限に留まらないための上限
+// (書き込みエラーが続く異常系でも resumeCapture が確実に呼ばれることを保証する)。
+const CLOSE_FORCE_GRACE_MS = 2000
+
 function startPlayback(name, pcm, patternName) {
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)
   const total = bytes.byteLength
   let position = 0
   let closed = false
   const label = patternName ? `${name}/${patternName}` : name
+
+  // AudioOut を open する直前に capture を止める。open が失敗しても
+  // resumeCapture() で必ず戻す(下の catch 参照)。
+  try {
+    suspendCapture()
+  } catch (error) {
+    trace(`[cry] suspendCapture failed: ${error}\n`)
+  }
 
   let out
   try {
@@ -571,14 +592,24 @@ function startPlayback(name, pcm, patternName) {
     })
   } catch (error) {
     // I2S TX は1本のみ。robot.tone 等と衝突していれば開けない — 黙ってスキップする。
+    // AudioOut は一度も open されていないので mic は即座に戻してよい。
     trace('[cry] busy, skipped\n')
+    try {
+      resumeCapture()
+    } catch (resumeError) {
+      trace(`[cry] resumeCapture (busy path) failed: ${resumeError}\n`)
+    }
     return false
   }
 
+  const closeDeadline = Time.ticks + total / BYTES_PER_SAMPLE / SAMPLE_RATE * 1000 + PLAYBACK_CLOSE_MARGIN_MS + CLOSE_FORCE_GRACE_MS
+
   function closeOut() {
     if (closed) return
-    if (position < total) {
+    if (position < total && Time.ticks < closeDeadline) {
       // まだ書き切っていない（Timer 遅延等）。少し待って再確認する。
+      // ただし closeDeadline を過ぎたら異常系とみなし強制的に閉じる
+      // (resumeCapture が呼ばれないまま mic が永久停止するのを防ぐ)。
       Timer.set(closeOut, 50)
       return
     }
@@ -594,17 +625,32 @@ function startPlayback(name, pcm, patternName) {
       // 握りつぶす。
     }
     trace(`[cry] play done ${label}\n`)
+    Timer.set(() => {
+      try {
+        resumeCapture()
+      } catch (error) {
+        trace(`[cry] resumeCapture (close path) failed: ${error}\n`)
+      }
+    }, MIC_RESUME_DELAY_MS)
   }
 
   try {
     out.start()
   } catch (error) {
     trace(`[cry] start failed ${label}: ${error}\n`)
+    closed = true
     try {
       out.close()
     } catch (_closeError) {
       // 握りつぶす。
     }
+    Timer.set(() => {
+      try {
+        resumeCapture()
+      } catch (resumeError) {
+        trace(`[cry] resumeCapture (start-failed path) failed: ${resumeError}\n`)
+      }
+    }, MIC_RESUME_DELAY_MS)
     return false
   }
 
