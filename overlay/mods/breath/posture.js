@@ -32,10 +32,10 @@ const defaults = {
   // 動けない — ドライバが -rotation.p を 0〜90° にクランプするため。2026-07-07 特定)
   recoil: {
     enabled: true,
-    pitchDeltaDeg: 6, // のけぞりで一時的に上げる角度
-    outTime: 0.15, // のけぞる速さ(秒)
+    pitchDeltaDeg: 3, // のけぞりで一時的に上げる角度(2026-07-08 騒音 FB で 6 → 3)
+    outTime: 0.5, // のけぞる速さ(秒)(同 FB で 0.15 → 0.5 — 高速動作はうるさい)
     holdMs: 600, // のけぞりを保持する時間
-    returnTime: 1.0, // 戻る速さ(秒)
+    returnTime: 1.8, // 戻る速さ(秒)(同 FB で 1.0 → 1.8)
   },
   pose: {
     pitchBase: 10, // v=0, a=0 のときの基準見上げ角(度)
@@ -44,8 +44,8 @@ const defaults = {
     pitchSleepy: 0, // sleepy 中は水平まで下げる(うつむきの近似)
     moveMinIntervalS: 45, // 感情姿勢の移動間隔の下限(秒)
     deltaMinDeg: 4, // この角度未満の差では動かさない
-    timeMin: 1.2, // 移動時間の下限(秒)
-    timeMax: 2.0, // 移動時間の上限(秒)
+    timeMin: 1.8, // 移動時間の下限(秒)(2026-07-08 騒音 FB で 1.2 → 1.8)
+    timeMax: 2.6, // 移動時間の上限(秒)(同 2.0 → 2.6)
   },
 }
 

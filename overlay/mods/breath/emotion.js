@@ -412,6 +412,14 @@ export function getEmotion() {
     },
     sleepy,
     night: lastIsNight,
+    // デバッグ計器(2026-07-08 脈動停止の調査): 左目の実描画矩形(eye-cozmo の
+    // rect ブリッジ)と mouth 由来の呼吸位相。脈動が生きていれば dbgEye.h が
+    // 1 呼吸(±10 秒)で ~68〜84px を往復し、dbgPulse が 0..1 を往復する。
+    dbgEye: globalThis.breathEyeRectL
+      ? { h: globalThis.breathEyeRectL.h, top: globalThis.breathEyeRectL.top }
+      : null,
+    dbgPulse: Math.round((globalThis.breathPulse ?? -1) * 1000) / 1000,
+    dbgPulseDepth: globalThis.breathPulseDepth ?? null,
   }
 }
 

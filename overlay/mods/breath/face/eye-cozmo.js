@@ -31,6 +31,10 @@ const MICRO_DRIFT_PERIOD_X_MS = 3400
 const MICRO_DRIFT_PERIOD_Y_MS = 5100
 const MICRO_DRIFT_Y_RATIO = 0.7
 const MIN_BLINK_HEIGHT_RATIO = 0.06 // Cozmo 流の「潰れるまばたき」の下限(0 だと完全に消える)
+// 呼吸の上下(ボブ): 吸うと目が浮き、吐くと沈む(胸の上下のアナロジー)。脈動
+// (サイズ変化)への追加(2026-07-08 ユーザー要望「サイズが変わりつつ上下もする」)。
+// liveliness の face.breathBobPx(globalThis.breathBobPx 経由)でライブ調整できる。
+const BREATH_BOB_PX_DEFAULT = 3
 const QUANTIZE_PX = 0.5
 const OCCLUDER_SMOOTH_RATIO = 0.15 // occluder の値平滑化(emotion.js の 1Hz tick を毎フレームなめらかに見せる)
 const MIN_VISIBLE_LID_RATIO = 0.02 // これ未満の topLid/botArc は非表示にする(空のパスを作らない)
@@ -135,9 +139,11 @@ export const CozmoEye = Shape.template((opts) => {
 
         // v1.2.0 (E1) — emotion.js の eyeLift(a*4px)。覚醒で上へ(y は画面下方向が正なので減算)。
         const emoLift = globalThis.breathEyeLift ?? 0
+        // 呼吸ボブ: 吸う(pulse→1)と浮き、吐く(pulse→0)と沈む。
+        const bobY = pulse * (globalThis.breathBobPx ?? BREATH_BOB_PX_DEFAULT)
 
         const left = quantize(cx - w / 2 + gazeX + driftX, QUANTIZE_PX)
-        const top = quantize(cy - h / 2 + gazeY + driftY - emoLift, QUANTIZE_PX)
+        const top = quantize(cy - h / 2 + gazeY + driftY - emoLift - bobY, QUANTIZE_PX)
 
         const sizeChanged = w !== this.lastOutlineW || h !== this.lastOutlineH
         if (sizeChanged) {

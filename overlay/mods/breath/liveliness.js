@@ -48,7 +48,7 @@ const defaults = {
     enabled: true,
     meanIntervalMs: 9000, // 視線を動かす平均間隔(2026-07-07 FB「大きく・速く・まれに」で 5000 → 9000)
     minIntervalMs: 2500,
-    amplitude: 1, // 中心からの最大オフセット(lookAt 座標系、メートル。y に適用、z はさらに GAZE_VERTICAL_SCALE 倍)
+    amplitude: 0.8, // 中心からの最大オフセット(lookAt 座標系)。2026-07-08 サーボ騒音 FB で 1 → 0.8(最大 yaw 44° < 首追従閾値 45° = idle で首が動かない)。E3.1 の follow-ratio 導入後に 1.0 へ戻す候補
     pixelScale: 40, // 目全体の平行移動倍率(px)。eye-cozmo の globalThis.breathGazeScale へ反映(B 案は目自体が動くため大きい)
     centerBias: 0.25, // この確率で中心(正面)に戻す
     settleMs: [300, 1500], // 動かした後の余白(concept の「間」)
@@ -68,6 +68,7 @@ const defaults = {
   face: {
     pulseDepth: 0.24, // 呼吸による目の脈動深さ(2026-07-07 FB「呼吸の動きを大きく」で 0.14 → 0.24)
     microDriftPx: 0, // 常時の漂い(2026-07-07 FB「漂いではなくサッカードとして」で 0 = 無効)
+    breathBobPx: 75, // 呼吸の上下(吸うと浮く)。2026-07-08 ユーザー確定 — 大きな浮き沈みが呼吸として読める値(吸気ピークで目が画面上端に達する寸前まで浮く)
   },
 }
 
@@ -79,6 +80,7 @@ const CLAMP_RANGES = {
   'gaze.pixelScale': [1, 80],
   'face.pulseDepth': [0, 0.5],
   'face.microDriftPx': [0, 8],
+  'face.breathBobPx': [0, 100], // 実験用に広め(目の上端は静止時 ~75px 位置。それ以上は吸気ピークで画面外にクリップされる)
   'gaze.centerBias': [0, 1],
   'deepBreath.probPerCycle': [0, 1],
   'deepBreath.scale': [1, 4],
@@ -295,6 +297,7 @@ function applyGazePixelScale() {
 function applyFaceParams() {
   globalThis.breathPulseDepth = params.face.pulseDepth
   globalThis.breathMicroDrift = params.face.microDriftPx
+  globalThis.breathBobPx = params.face.breathBobPx
 }
 
 export function startLiveliness(robot) {
