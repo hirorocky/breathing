@@ -6,10 +6,11 @@
 #   overlay/scripts/mic-monitor.sh                # port 8688 で待ち受け
 #   overlay/scripts/mic-monitor.sh 8688            # port を明示
 #
-# 受信する JSON: {"t":<uptimeMs>,"rms":<0-32767>,"peak":<0-32767>,"ev"?:<string>}
+# 受信する JSON: {"t":<uptimeMs>,"rms":<0-32767>,"peak":<0-32767>,"ev"?:<string>,"lag"?:<int>}
 # rms を簡易バー（# の連なり）付きで 1 行表示する。ev フィールドがあれば
 # （v1.1.0 Phase 3b のイベント検出発火直後の 1 パケットにだけ乗る）行末に
-# 目立つマーカーを付ける。
+# 目立つマーカーを付ける。lag があれば（v1.1.0 Phase 3b+ 方向推定。loud/clap
+# のみ）マーカーに続けて表示する。
 set -euo pipefail
 
 PORT="${1:-8688}"
@@ -42,9 +43,12 @@ while True:
         rms = payload.get("rms", 0)
         peak = payload.get("peak", 0)
         ev = payload.get("ev")
+        lag = payload.get("lag")
         filled = min(BAR_WIDTH, int(rms * BAR_WIDTH / BAR_SCALE))
         bar = "#" * filled + " " * (BAR_WIDTH - filled)
         marker = f"  <<< {ev.upper()}" if ev else ""
+        if lag is not None:
+            marker += f" lag={lag}"
         print(f"[{ts}] {addr[0]}: t={t:>10} rms={rms:>6} peak={peak:>6} |{bar}|{marker}", flush=True)
     except Exception:
         print(f"[{ts}] {addr[0]}: (unparsed) {text}", flush=True)

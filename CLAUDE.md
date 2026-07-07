@@ -294,6 +294,7 @@ npm run mod:m5stackchan-cores3 -- ../../overlay/mods/<mod>/manifest.json
 | `PUT /ota` が 401 | `x-dev-token` 不一致 | `overlay/firmware/manifest_breath_deploy.json` の `config.devToken`（既定 `breath-dev`）とヘッダを揃える |
 | `/status` も ping も UDP ログも無反応 | **まず電源と IP を疑う**（DHCP で IP は変わる。実績: .76 → .66）。クラッシュとは限らない | 電源を確認 → `overlay/scripts/stackchan-ip.sh` で自動発見（DHCP 予約は不要）。それでも無反応なら `logs.sh` を起動した状態で電源投入し UDP ブートトレースの送信元 IP を確認 |
 | `GET /mic` の rms/peak が 0 固定 | CoreS3 はスピーカー TX とマイク RX が I2S クロックピン（BCK=G34/LR=G33）を共有しており、**AudioOut open がマイク入力を全ゼロにする**（close 後も自然復旧しない） | capture の stop/start で復活。cry.js は suspend/resume ハンドシェイク済み。それ以外の TX 利用（`robot.tone` 等）は mic.js のゼロ・ストール・ウォッチドッグが数秒で自動復旧させる |
+| マイクがステレオにならない（方向推定の l0・l1 が同一/lag 無意味） | デバイス定義の `audioIn.numChannels: 2` 宣言が**ビルド解決で 1（モノラル）に落ちる**（SDK の defines 解決順の罠。実績 2026-07-07） | `manifest_breath_deploy.json` の `defines.audioIn.numChannels: 2` 明示オーバーライドを維持する。確認は build 後の `mc.defines.h` で `MODDEF_AUDIOIN_NUMCHANNELS (2)` |
 
 ### ビルド環境
 

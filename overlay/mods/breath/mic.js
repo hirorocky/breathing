@@ -36,6 +36,23 @@ import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } 
  * silence)を追加した。closeWindow から呼ぶ O(1) の分岐・算術のみで、反応
  * (顔・音)は一切つながない — trace・イベントリング・UDP ストリーム(ev
  * フィールド)・onMicEvent 購読(3c 用)で観測できるだけ。
+ *
+ * v1.1.0 Phase 3b+ — 方向推定(観測のみ、反応は一切つながない)。CoreS3 は
+ * ES7210 デュアルマイク(間隔 ~4cm)で、AudioIn を 2ch(`defines.audioIn.
+ * numChannels: 2`。実測で確認 — device target 側は既に 2 を宣言していたが
+ * 実際の合成結果は 1 に落ちていたため `overlay/firmware/manifest_breath_
+ * deploy.json` に明示的な `defines.audioIn.numChannels: 2` を追加して修正
+ * した)で受けているため、`this.read(...)` が返す ArrayBuffer は L/R
+ * インターリーブの Int16(サンプル n の ch0 = samples[2n]、ch1 =
+ * samples[2n+1])。どちらが物理的に左/右かは未確定なため、`lag`(ch1 が
+ * ch0 に対して何サンプル遅れているか。正負の意味付けは実地検証で確定する)
+ * ・`l0`/`l1`(チャンネル別レベル)という中立な名前で報告する。
+ *
+ * チャンクの peak が `params.loud.peakMin` 以上・かつ直前の推定から
+ * `params.loud.refractoryMs` 以上経過したときだけ相互相関(ラグ ±maxLag)
+ * を計算する(通常時の追加 CPU はゼロ)。ループ内アロケーションなし・
+ * 例外は握って trace のみ(失敗しても loud/clap イベント自体は通常どおり
+ * 発火する)。
  */
 
 const PREF_KEY = 'mic'
@@ -43,9 +60,16 @@ const PREF_KEY = 'mic'
 const WINDOW_MS = 100 // 窓の長さ(固定。tunable パラメータではない)
 const RING_CAPACITY = 60 // ~6 秒分(既定 100ms 窓 × 60)
 const EVENT_RING_CAPACITY = 10 // 直近のイベント(loud/clap/voice/silence)を保持する件数
-const PEAK_STRIDE = 4 // ピーク走査の間引き(4 サンプルに 1 個)
+const PEAK_STRIDE = 4 // ピーク走査の間引き(基準。合計比較数の目安 N/PEAK_STRIDE)
+const PEAK_CHANNEL_STRIDE = PEAK_STRIDE * 2 // 開始 index 0・1 の 2 本をこの stride で走査(合計比較数を PEAK_STRIDE 単一走査と同じに保つ)
 const LEVEL_FALLBACK_STRIDE = 4 // ネイティブ level() が無い場合の JS 平均絶対値も同様に間引く
 const PROC_US_EMA_ALPHA = 0.2 // avgProcUs の指数移動平均の重み
+
+// v1.1.0 Phase 3b+ — 方向推定(TDOA + ILD)のウィンドウ。ピーク位置(サンプル
+// ペア index)の前 64・後 192(計 256 ペア)。チャンク境界でクランプする。
+const DIR_WINDOW_BEFORE = 64
+const DIR_WINDOW_AFTER = 192
+const DIR_ESTIMATE_MAX_AGE_MS = 1000 // イベントに添付してよい推定の鮮度(この窓を超えたら添付しない)
 
 const STREAM_HOST = '255.255.255.255' // グローバルブロードキャスト固定(サブネット仮定は禁止 — ERR_MEM 再起動ループの実績)
 const STREAM_PORT = 8688
@@ -73,6 +97,9 @@ const defaults = {
   clap: { ratioMin: 8 },
   voice: { rmsMin: 110, minWindows: 3, gapWindows: 1, hangoverMs: 30000 },
   silence: { rmsMax: 60, minutes: 5 },
+  // v1.1.0 Phase 3b+ — 方向推定(TDOA + ILD)。maxLag はマイク間隔 ~4cm →
+  // 到達時間差最大 ±117µs ≈ 16kHz で ±2 サンプル弱に余裕を持たせた値。
+  direction: { enabled: true, maxLag: 4 },
 }
 
 // path (e.g. 'stream.intervalMs') -> [min, max]。setMicParams / 復元時の安全クランプ。
@@ -87,6 +114,7 @@ const CLAMP_RANGES = {
   'voice.hangoverMs': [1000, 300000],
   'silence.rmsMax': [0, 5000],
   'silence.minutes': [1, 180],
+  'direction.maxLag': [1, 8],
 }
 
 let params = deepClone(defaults)
@@ -122,8 +150,15 @@ let lastVoiceTicks = -Infinity
 let silentState = false
 let lastNonQuietTicks = 0
 let pendingStreamEvent = null // 次の UDP ストリームパケットに一度だけ乗せる ev フィールド
+let pendingStreamEventLag = null // 同上。lag(推定があった場合のみ)
 const eventRing = []
 const micEventListeners = []
+
+// v1.1.0 Phase 3b+ — 方向推定(TDOA + ILD)の状態。反応は一切つながない。
+let micChannels = null // AudioIn.channels をキャッシュ(2 でなければ推定を実行しない)
+let lastDirEstimate = null // { t, lag, corrPeakRatio, l0, l1 }
+let lastDirEstimateTicks = -Infinity
+let lastDirComputeTicks = -Infinity // loud.refractoryMs と同様のゲート(毎チャンク計算しない)
 
 // ---------------------------------------------------------------------------
 // ヘルパー
@@ -154,14 +189,141 @@ function computeLevelFallback(samples, sampleCount) {
   return counted > 0 ? sum / counted : 0
 }
 
+/**
+ * ステレオ(L/R インターリーブ)前提の間引き走査。開始 index 0(偶数 = ch0)と
+ * 1(奇数 = ch1)の 2 本を PEAK_CHANNEL_STRIDE(= PEAK_STRIDE の 2 倍)で
+ * 走査する — 合計比較数は以前の単一走査(開始 0・stride PEAK_STRIDE)と同じ
+ * (N/PEAK_STRIDE)のまま、両チャンネルを同程度カバーする(以前は開始 0 の
+ * みだったため実質 ch0 しか見ていなかった。単純に両方を stride
+ * PEAK_STRIDE で回すとコストが 2 倍になるため、真のステレオ化で実データ量
+ * 自体が 2 倍になったこととの相乗を避けるためにここは同一コストへ据え置く)。
+ */
 function computePeak(samples, sampleCount) {
   let peak = 0
-  for (let i = 0; i < sampleCount; i += PEAK_STRIDE) {
+  for (let i = 0; i < sampleCount; i += PEAK_CHANNEL_STRIDE) {
+    const v = samples[i]
+    const abs = v < 0 ? -v : v
+    if (abs > peak) peak = abs
+  }
+  for (let i = 1; i < sampleCount; i += PEAK_CHANNEL_STRIDE) {
     const v = samples[i]
     const abs = v < 0 ? -v : v
     if (abs > peak) peak = abs
   }
   return peak
+}
+
+// ---------------------------------------------------------------------------
+// 方向推定(TDOA + ILD)— v1.1.0 Phase 3b+。loud 候補チャンクのときだけ呼ぶ
+// (maybeEstimateDirection のゲート経由)。反応は一切つながない(観測のみ)。
+// ---------------------------------------------------------------------------
+
+/** チャンク全体(フレーム単位)で ch0/ch1 のうち大きい方の絶対値が最大のフレーム index を探す。 */
+function findPeakFrameIndex(samples, frameCount) {
+  let peak = -1
+  let idx = 0
+  for (let n = 0; n < frameCount; n++) {
+    const base = n << 1
+    let v0 = samples[base]
+    if (v0 < 0) v0 = -v0
+    let v1 = samples[base + 1]
+    if (v1 < 0) v1 = -v1
+    const m = v0 > v1 ? v0 : v1
+    if (m > peak) {
+      peak = m
+      idx = n
+    }
+  }
+  return idx
+}
+
+/**
+ * ピーク周辺のウィンドウ(前 DIR_WINDOW_BEFORE・後 DIR_WINDOW_AFTER、チャンク
+ * 境界でクランプ)で相互相関(ラグ -maxLag..+maxLag)とチャンネル別レベルを
+ * 求める。アロケーションなし(インデックス演算のみ、corr は都度上書きする
+ * スカラー変数)。ウィンドウが小さすぎる(チャンク境界付近でピークが立った)
+ * 場合は null を返す。
+ */
+function computeDirectionEstimate(samples, frameCount, peakFrameIdx, now) {
+  const maxLag = params.direction.maxLag
+
+  let winStart = peakFrameIdx - DIR_WINDOW_BEFORE
+  if (winStart < 0) winStart = 0
+  let winEnd = peakFrameIdx + DIR_WINDOW_AFTER
+  if (winEnd > frameCount) winEnd = frameCount
+  if (winEnd - winStart <= maxLag * 2) return null
+
+  let bestLag = 0
+  let bestCorr = -Infinity
+  let zeroLagCorr = 0
+  for (let lag = -maxLag; lag <= maxLag; lag++) {
+    let corr = 0
+    for (let n = winStart; n < winEnd; n++) {
+      const m = n + lag
+      if (m < 0 || m >= frameCount) continue
+      corr += samples[n << 1] * samples[(m << 1) + 1]
+    }
+    if (0 === lag) zeroLagCorr = corr
+    if (corr > bestCorr) {
+      bestCorr = corr
+      bestLag = lag
+    }
+  }
+
+  let sumAbs0 = 0
+  let sumAbs1 = 0
+  for (let n = winStart; n < winEnd; n++) {
+    let v0 = samples[n << 1]
+    if (v0 < 0) v0 = -v0
+    let v1 = samples[(n << 1) + 1]
+    if (v1 < 0) v1 = -v1
+    sumAbs0 += v0
+    sumAbs1 += v1
+  }
+  const windowCount = winEnd - winStart
+  const l0 = windowCount > 0 ? Math.round(sumAbs0 / windowCount) : 0
+  const l1 = windowCount > 0 ? Math.round(sumAbs1 / windowCount) : 0
+  const corrPeakRatio = zeroLagCorr > 0 ? Math.round((bestCorr / zeroLagCorr) * 100) / 100 : 0
+
+  return { t: now, lag: bestLag, corrPeakRatio, l0, l1 }
+}
+
+/**
+ * チャンクの peak が `params.loud.peakMin` 以上・かつ直前の推定から
+ * `params.loud.refractoryMs` 以上経過したときだけ実行する(通常時の追加
+ * CPU ゼロ)。全体を try/catch で包み、失敗しても loud/clap イベント自体は
+ * 通常どおり発火する(呼び出し側の accumulateChunk には影響しない)。
+ */
+function maybeEstimateDirection(audioIn, samples, sampleCount, peakValue) {
+  try {
+    if (!params.direction.enabled) return
+    if (peakValue < params.loud.peakMin) return
+
+    if (null === micChannels) {
+      micChannels = typeof audioIn.channels === 'number' ? audioIn.channels : 1
+    }
+    if (2 !== micChannels) return
+
+    const now = Time.ticks
+    if (now - lastDirComputeTicks < params.loud.refractoryMs) return
+    lastDirComputeTicks = now
+
+    const frameCount = sampleCount >> 1
+    if (frameCount < 2) return
+
+    const startTicks = Time.ticks
+    const peakFrameIdx = findPeakFrameIndex(samples, frameCount)
+    const estimate = computeDirectionEstimate(samples, frameCount, peakFrameIdx, now)
+    const elapsedMs = Time.ticks - startTicks
+
+    if (estimate) {
+      lastDirEstimate = estimate
+      lastDirEstimateTicks = now
+      trace(`[mic] direction estimate lag=${estimate.lag} l0=${estimate.l0} l1=${estimate.l1} ratio=${estimate.corrPeakRatio} tookMs=${elapsedMs}\n`)
+    }
+  } catch (error) {
+    trace(`[mic] direction estimate failed: ${error}\n`)
+  }
 }
 
 function accumulateChunk(audioIn, buffer) {
@@ -175,6 +337,8 @@ function accumulateChunk(audioIn, buffer) {
   windowLevelWeightedSum += levelValue * sampleCount
   windowSampleCount += sampleCount
   if (peakValue > windowPeak) windowPeak = peakValue
+
+  maybeEstimateDirection(audioIn, samples, sampleCount, peakValue)
 }
 
 // ---------------------------------------------------------------------------
@@ -197,11 +361,28 @@ function notifyMicEventListeners(event) {
   }
 }
 
+/**
+ * loud/clap の直近の方向推定(`DIR_ESTIMATE_MAX_AGE_MS` 以内)があれば
+ * `lag`/`l0`/`l1` をイベントに添付する(v1.1.0 Phase 3b+。voice/silence には
+ * 添付しない — 方向推定は loud 候補チャンクでのみ計算されるため)。
+ */
+function attachDirection(event, now) {
+  if ('loud' !== event.type && 'clap' !== event.type) return
+  if (!lastDirEstimate) return
+  if (now - lastDirEstimateTicks > DIR_ESTIMATE_MAX_AGE_MS) return
+  event.lag = lastDirEstimate.lag
+  event.l0 = lastDirEstimate.l0
+  event.l1 = lastDirEstimate.l1
+}
+
 function emitMicEvent(now, type, rms, peak) {
   const event = { t: now, type, rms, peak }
+  attachDirection(event, now)
   pushEventRing(event)
   pendingStreamEvent = type // 次の sendStreamPacket にだけ ev フィールドを乗せる
-  trace(`[mic] event ${type} peak=${peak} rms=${rms}\n`)
+  pendingStreamEventLag = 'number' === typeof event.lag ? event.lag : null
+  const dirPart = 'number' === typeof event.lag ? ` lag=${event.lag} l0=${event.l0} l1=${event.l1}` : ''
+  trace(`[mic] event ${type} peak=${peak} rms=${rms}${dirPart}\n`)
   notifyMicEventListeners(event)
   return event
 }
@@ -368,9 +549,12 @@ function ensureSocket() {
 function sendStreamPacket() {
   try {
     // イベント発火直後の最初のパケットにだけ ev フィールドを乗せる(v1.1.0 Phase 3b)。
+    // 方向推定が添付されていれば lag も同じパケットに乗せる(v1.1.0 Phase 3b+)。
     const evPart = pendingStreamEvent ? `,"ev":"${pendingStreamEvent}"` : ''
+    const lagPart = null !== pendingStreamEventLag ? `,"lag":${pendingStreamEventLag}` : ''
     pendingStreamEvent = null
-    const payload = `{"t":${lastWindow.t},"rms":${lastWindow.rms},"peak":${lastWindow.peak}${evPart}}`
+    pendingStreamEventLag = null
+    const payload = `{"t":${lastWindow.t},"rms":${lastWindow.rms},"peak":${lastWindow.peak}${evPart}${lagPart}}`
     ensureSocket().write(STREAM_HOST, STREAM_PORT, ArrayBuffer.fromString(payload))
   } catch (error) {
     trace(`[mic] stream send failed: ${error}\n`)
@@ -528,6 +712,7 @@ export function getMicStatus() {
     peak: lastWindow.peak,
     avgProcUs: avgProcUsEma == null ? 0 : Math.round(avgProcUsEma),
     ring: summarizeRing(),
+    lastDir: lastDirEstimate ? { ...lastDirEstimate } : null,
     events: eventRing.slice(),
     state: {
       voiceActive,

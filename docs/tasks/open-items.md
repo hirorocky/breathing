@@ -167,7 +167,11 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
 - [x] **3b イベント化**（2026-07-07 実機開通）: loud / clap / voice / silence の検出（closeWindow 内 O(1)、`detectEvents`）+ `PUT /mic/params` ライブ調整 + イベントリング（`GET /mic` の `events`/`state`）+ UDP ストリームの `ev` フィールド + `onMicEvent(cb)` 購読 API（3c 用）。settings-bar のビープにも suspend/resume を配線済み
   - 校正セッション（2026-07-07、デバイスから 1〜2m）による閾値既定値: 拍手 = peak 6,100〜20,300・**peak/rms 比 13〜17**、声 = rms 100〜165・比 2〜3.4、静音フロア = rms 中央値 24・最大 99 → `loud.peakMin 3000 / clap.ratioMin 8 / voice.rmsMin 110×3窓 / silence.rmsMax 60×5分`
   - 検証中に実環境音が校正どおり判別された（clap 比 16.2・25.8、voice 比 3.0）。murmur は suspend/resume ハンドシェイクにより自己イベント誤検出ゼロ
-- [ ] **3b+ 方向推定**（ユーザー要望 2026-07-07: 「大きな音が鳴った方を向く」）: CoreS3 のデュアルマイクは既にステレオ 2ch で届いている。loud チャンク内で TDOA（L/R 相互相関、ラグ ±4 サンプル @16kHz、マイク間隔 ~4cm → 実効 ±2）+ レベル差（ILD）補助 → **左/中/右 3〜5 バケット**。対象は破裂音のみ（連続音は反響で不可）。計算は loud イベント時のみ数 ms。これが入ると ELEGNT 台帳の「方向つき一瞥」が解禁（能力の正直さ充足）。L/R チャンネルと物理配置の対応は左右拍手の検証セッションで実地確定する
+- [x] **3b+ 方向推定・実装**（2026-07-07 配備済み。ユーザー要望「大きな音が鳴った方を向く」）: loud チャンク内で TDOA（ch0×ch1 相互相関、ラグ ±4 @16kHz）+ チャンネル別レベル（l0/l1）。loud/clap イベントに `lag`/`l0`/`l1` が付く。`params.direction {enabled, maxLag}`。対象は破裂音のみ（連続音は反響で不可）。これが入ると ELEGNT 台帳の「方向つき一瞥」が解禁（能力の正直さ充足）
+  - **重大発見**: デバイス定義は `numChannels: 2` を宣言していたのにビルド解決は **1（モノラル）**に落ちており、片チャンネルを黙って捨てていた → `manifest_breath_deploy.json` に `defines.audioIn.numChannels: 2` を明示して真のステレオ化（`mc.defines.h` で NUMCHANNELS(2) を確認済み）
+  - コスト実測: 方向推定は 41〜93ms/回（loud 時のみ・refractory ゲート付き。3c では startle の呼吸停止と同じ瞬間なので実害薄）。定常 avgProcUs はステレオ化で ~15,000〜24,000µs（CPU 15〜24%）に増加 — **要観察項目**（呼吸のカクつきが見えたら peak 走査の間引き強化で下げられる）
+  - afplay 実験: ch0 が一貫して大きい・lag は位置固定で安定。ただし Mac スピーカーの位置が未統制のため意味付けは保留
+- [ ] **3b+ L/R 実地確定**: 左右拍手の検証セッションで lag の符号・l0/l1 と物理方向の対応を確定 → 方向バケット（左/中/右）の閾値を既定値化
 - [ ] **3c 総合的な動きの作り込み**: 顔・音・サーボを組み合わせた反応を**一つずつ**（例: 大きな音 → startle 鳴き + まばたき + 呼吸一拍止め。「間」の原則 = 反応まで 300ms〜1.5s の余白）。**設計台帳: `docs/tasks/elegnt-expression-design.md`**（ELEGNT の 4 語彙 intention/attention/attitude/emotion × StackChan アセットのマップ、実装順、ガードレール）
 - [ ] 頭頂タッチの微反応
 - [ ] IMU 反応の試行（オフ既定）
