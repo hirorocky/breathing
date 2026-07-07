@@ -2,6 +2,7 @@ import { setBacklightVoltage, getBacklightVoltage } from 'm5stackchan/battery'
 import { Container, Content, Label, Skin, Style } from 'piu/MC'
 import Timer from 'timer'
 import Preference from 'preference'
+import { suspendCapture, resumeCapture } from 'breath/mic'
 
 /** 画面下端から上スワイプで表示する設定バー（明るさ・音量） */
 const SETTINGS_BAR_VERSION = 1
@@ -29,6 +30,9 @@ const VOLUME_STEP = 32
 const VOLUME_BEEP_HZ = 880
 const VOLUME_BEEP_MS = 80
 const VOLUME_BEEP_VOLUME = 0.5
+// v1.1.0 Phase 3b — robot.tone も AudioOut TX を open するため mic 入力を殺す
+// (CoreS3 の I2S クロックピン共有問題。cry.js と同じ理由)。ビープ長 + 500ms で resume する。
+const VOLUME_BEEP_MIC_RESUME_DELAY_MS = 500
 
 // 顔の画面（黒背景・白前景）と区別するため、あえて反転トーンにしている（status-bar と同じ意図）
 const barSkin = new Skin({ fill: '#ffffff' })
@@ -127,8 +131,25 @@ export function applySavedSettings() {
   }
 }
 
+function scheduleMicResumeAfterBeep() {
+  Timer.set(() => {
+    try {
+      resumeCapture()
+    } catch (error) {
+      trace(`[settings-bar] resumeCapture failed: ${error}\n`)
+    }
+  }, VOLUME_BEEP_MS + VOLUME_BEEP_MIC_RESUME_DELAY_MS)
+}
+
 function playBeep(robot) {
   if (!robot) return
+
+  try {
+    suspendCapture()
+  } catch (error) {
+    trace(`[settings-bar] suspendCapture failed: ${error}\n`)
+  }
+
   try {
     const result = robot.tone(VOLUME_BEEP_HZ, VOLUME_BEEP_MS, VOLUME_BEEP_VOLUME)
     if (result && typeof result.catch === 'function') {
@@ -136,6 +157,9 @@ function playBeep(robot) {
     }
   } catch (error) {
     trace(`[settings-bar] tone failed: ${error}\n`)
+  } finally {
+    // tone が同期的に throw しても resume は必ず走らせる(mic 永久停止を防ぐ)。
+    scheduleMicResumeAfterBeep()
   }
 }
 

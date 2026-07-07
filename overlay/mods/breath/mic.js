@@ -31,12 +31,18 @@ import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } 
  * 全コールバックで例外を握って trace のみ(再スローしない)。Promise は一切
  * 使わない(unhandled rejection → XS abort → 再起動の実績があるため。
  * cry.js / dev-server.js と同じ方針)。
+ *
+ * v1.1.0 Phase 3b — 上記の窓(rms/peak)の上にイベント検出(loud/clap/voice/
+ * silence)を追加した。closeWindow から呼ぶ O(1) の分岐・算術のみで、反応
+ * (顔・音)は一切つながない — trace・イベントリング・UDP ストリーム(ev
+ * フィールド)・onMicEvent 購読(3c 用)で観測できるだけ。
  */
 
 const PREF_KEY = 'mic'
 
 const WINDOW_MS = 100 // 窓の長さ(固定。tunable パラメータではない)
 const RING_CAPACITY = 60 // ~6 秒分(既定 100ms 窓 × 60)
+const EVENT_RING_CAPACITY = 10 // 直近のイベント(loud/clap/voice/silence)を保持する件数
 const PEAK_STRIDE = 4 // ピーク走査の間引き(4 サンプルに 1 個)
 const LEVEL_FALLBACK_STRIDE = 4 // ネイティブ level() が無い場合の JS 平均絶対値も同様に間引く
 const PROC_US_EMA_ALPHA = 0.2 // avgProcUs の指数移動平均の重み
@@ -60,11 +66,27 @@ const defaults = {
     enabled: false,
     intervalMs: 100,
   },
+  // v1.1.0 Phase 3b — イベント検出パラメータ(実測済みの指紋を既定値の根拠にする。
+  // 2026-07-07 校正: 静音フロア rms 中央値 24・最大 99、拍手 peak 6,100〜20,300 /
+  // peak/rms 比 13〜17、声 rms 100〜165 / peak/rms 比 2〜3.4)。
+  loud: { peakMin: 3000, refractoryMs: 1500 },
+  clap: { ratioMin: 8 },
+  voice: { rmsMin: 110, minWindows: 3, gapWindows: 1, hangoverMs: 30000 },
+  silence: { rmsMax: 60, minutes: 5 },
 }
 
 // path (e.g. 'stream.intervalMs') -> [min, max]。setMicParams / 復元時の安全クランプ。
 const CLAMP_RANGES = {
   'stream.intervalMs': [20, 5000],
+  'loud.peakMin': [200, 32767],
+  'loud.refractoryMs': [100, 10000],
+  'clap.ratioMin': [2, 50],
+  'voice.rmsMin': [10, 5000],
+  'voice.minWindows': [1, 20],
+  'voice.gapWindows': [0, 10],
+  'voice.hangoverMs': [1000, 300000],
+  'silence.rmsMax': [0, 5000],
+  'silence.minutes': [1, 180],
 }
 
 let params = deepClone(defaults)
@@ -89,6 +111,19 @@ let windowProcMsSum = 0
 let windowProcCount = 0
 
 let avgProcUsEma = null
+
+// v1.1.0 Phase 3b — イベント検出(loud/clap/voice/silence)の状態。反応(顔・音)は
+// 一切つながない — trace・リングバッファ・UDP ストリームで観測できるだけ。
+let lastLoudEventTicks = -Infinity
+let voiceActive = false
+let voiceStreak = 0
+let voiceGapStreak = 0
+let lastVoiceTicks = -Infinity
+let silentState = false
+let lastNonQuietTicks = 0
+let pendingStreamEvent = null // 次の UDP ストリームパケットに一度だけ乗せる ev フィールド
+const eventRing = []
+const micEventListeners = []
 
 // ---------------------------------------------------------------------------
 // ヘルパー
@@ -142,6 +177,100 @@ function accumulateChunk(audioIn, buffer) {
   if (peakValue > windowPeak) windowPeak = peakValue
 }
 
+// ---------------------------------------------------------------------------
+// イベント検出(loud/clap/voice/silence)— closeWindow から呼ぶ。O(1) の分岐・
+// 算術のみ(ループ・アロケーション追加なし)。反応は一切つながない。
+// ---------------------------------------------------------------------------
+
+function pushEventRing(event) {
+  eventRing.push(event)
+  if (eventRing.length > EVENT_RING_CAPACITY) eventRing.shift()
+}
+
+function notifyMicEventListeners(event) {
+  for (const callback of micEventListeners) {
+    try {
+      callback(event)
+    } catch (error) {
+      trace(`[mic] event listener failed: ${error}\n`)
+    }
+  }
+}
+
+function emitMicEvent(now, type, rms, peak) {
+  const event = { t: now, type, rms, peak }
+  pushEventRing(event)
+  pendingStreamEvent = type // 次の sendStreamPacket にだけ ev フィールドを乗せる
+  trace(`[mic] event ${type} peak=${peak} rms=${rms}\n`)
+  notifyMicEventListeners(event)
+  return event
+}
+
+/**
+ * 窓を閉じるたびに評価する。種別は最大1つ(loud/clap と voice/silence は
+ * 条件上重ならない — voice は peak < loud.peakMin が前提、silence は
+ * 非静音判定が先に走るため同一窓では発火しない)。
+ */
+function detectEvents(now, rms, peak) {
+  let firedType = null
+
+  // --- loud / clap(同じ refractory を共有する「loud 系イベント」)---
+  if (peak >= params.loud.peakMin && now - lastLoudEventTicks >= params.loud.refractoryMs) {
+    lastLoudEventTicks = now
+    const type = rms > 0 && peak / rms >= params.clap.ratioMin ? 'clap' : 'loud'
+    emitMicEvent(now, type, rms, peak)
+    firedType = type
+    lastNonQuietTicks = now
+  }
+
+  // --- voice(声窓のヒステリシス。voice.gapWindows まで途切れを許容)---
+  const isVoiceWindow = rms >= params.voice.rmsMin && peak < params.loud.peakMin
+  if (isVoiceWindow) {
+    voiceGapStreak = 0
+    if (voiceActive) {
+      lastVoiceTicks = now
+    } else {
+      voiceStreak++
+      if (voiceStreak >= params.voice.minWindows) {
+        voiceActive = true
+        voiceStreak = 0
+        lastVoiceTicks = now
+        emitMicEvent(now, 'voice', rms, peak)
+        firedType = 'voice'
+        lastNonQuietTicks = now
+      }
+    }
+  } else if (!voiceActive && voiceStreak > 0) {
+    voiceGapStreak++
+    if (voiceGapStreak > params.voice.gapWindows) {
+      voiceStreak = 0
+      voiceGapStreak = 0
+    }
+  }
+
+  if (voiceActive && now - lastVoiceTicks > params.voice.hangoverMs) {
+    voiceActive = false
+    voiceStreak = 0
+    voiceGapStreak = 0
+  }
+
+  // --- silence(無音が silence.minutes 続いた瞬間に 1 回だけ発火)---
+  if (rms > params.silence.rmsMax) {
+    lastNonQuietTicks = now
+    silentState = false
+  } else if (firedType) {
+    lastNonQuietTicks = now // loud/clap/voice の発火自体も「非静音」として扱う
+  }
+
+  if (!silentState && now - lastNonQuietTicks >= params.silence.minutes * 60000) {
+    silentState = true
+    emitMicEvent(now, 'silence', rms, peak)
+    firedType = 'silence'
+  }
+
+  return firedType
+}
+
 function closeWindow(now) {
   const rms = windowSampleCount > 0 ? Math.round(windowLevelWeightedSum / windowSampleCount) : 0
   const peak = windowPeak
@@ -152,6 +281,8 @@ function closeWindow(now) {
     const avgUsThisWindow = (windowProcMsSum / windowProcCount) * 1000
     avgProcUsEma = avgProcUsEma == null ? avgUsThisWindow : avgProcUsEma + PROC_US_EMA_ALPHA * (avgUsThisWindow - avgProcUsEma)
   }
+
+  detectEvents(now, rms, peak)
 
   checkZeroStall(now)
 
@@ -236,7 +367,10 @@ function ensureSocket() {
 
 function sendStreamPacket() {
   try {
-    const payload = `{"t":${lastWindow.t},"rms":${lastWindow.rms},"peak":${lastWindow.peak}}`
+    // イベント発火直後の最初のパケットにだけ ev フィールドを乗せる(v1.1.0 Phase 3b)。
+    const evPart = pendingStreamEvent ? `,"ev":"${pendingStreamEvent}"` : ''
+    pendingStreamEvent = null
+    const payload = `{"t":${lastWindow.t},"rms":${lastWindow.rms},"peak":${lastWindow.peak}${evPart}}`
     ensureSocket().write(STREAM_HOST, STREAM_PORT, ArrayBuffer.fromString(payload))
   } catch (error) {
     trace(`[mic] stream send failed: ${error}\n`)
@@ -352,6 +486,7 @@ export function startMic(robot) {
   started = true
 
   params = loadParams(PREF_KEY, defaults, CLAMP_RANGES)
+  lastNonQuietTicks = Time.ticks // silence 検出の基準点(起動直後を「非静音」扱いにする)
 
   const microphone = robot?.microphone
   if (!microphone) {
@@ -372,7 +507,17 @@ export function startMic(robot) {
   trace('[mic] started\n')
 }
 
-/** 現在の状態(GET /mic)。現在レベル・リングバッファ要約・avgProcUs・params。 */
+/**
+ * イベント購読(v1.1.0 Phase 3c 用)。callback は `(event) => {}` 形式
+ * (`{ t, type, rms, peak }`)。解除 API はない(mod 構成は静的)。登録した
+ * callback が例外を投げても他の callback・検出処理には波及しない。
+ */
+export function onMicEvent(callback) {
+  if (typeof callback !== 'function') return
+  micEventListeners.push(callback)
+}
+
+/** 現在の状態(GET /mic)。現在レベル・リングバッファ要約・avgProcUs・イベント・params。 */
 export function getMicStatus() {
   return {
     enabled: params.enabled,
@@ -383,6 +528,12 @@ export function getMicStatus() {
     peak: lastWindow.peak,
     avgProcUs: avgProcUsEma == null ? 0 : Math.round(avgProcUsEma),
     ring: summarizeRing(),
+    events: eventRing.slice(),
+    state: {
+      voiceActive,
+      silent: silentState,
+      silentForMs: silentState ? Time.ticks - lastNonQuietTicks : 0,
+    },
     params: deepClone(params),
   }
 }

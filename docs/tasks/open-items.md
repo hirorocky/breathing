@@ -164,7 +164,10 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
   - 汎用化した `overlay/mods/breath/param-store.js`（mergeValidated / clamp / Preference 永続化）を新設。liveliness.js の同パターン移行は別の機会（動作中コードに触らない）
   - **ハード制約バグを発見・修正**（2026-07-07 実機特定）: CoreS3 はスピーカー（AW88298/AudioOut）とマイク（ES7210/AudioIn）が I2S クロックピン（BCK=G34/LR=G33）を共有しており、**AudioOut を open した瞬間からマイク入力が全ゼロになり close 後も自然復旧しない**（capture の stop/start でのみ復活）。対処 2 段構え: (1) cry.js が再生前 `suspendCapture()` → close +500ms 後 `resumeCapture()`（全終了経路で resume 保証 + closeDeadline で異常系も保証。自己音ゲートの土台を兼ねる）、(2) mic.js にゼロ・ストール・ウォッチドッグ（ゼロ窓 15 連続 → capture 再起動、最短 10 秒間隔）。murmur ×2 で復旧を実機検証済み
   - 残課題（3b に同梱）: `settings-bar.js` の音量確認ビープ（`robot.tone`）も同じ問題を起こす（現状はウォッチドッグが数秒で自動復旧させる）。3b デプロイ時に suspend/resume を配線する
-- [ ] **3b イベント化**: loud / clap / voice / silence の検出 + 自己音ゲート + `PUT /mic/params` ライブ調整。イベントは trace のみ（拍手・発話・無音をユーザーが演じ、UDP ログで判別精度を確認する Loop C）
+- [x] **3b イベント化**（2026-07-07 実機開通）: loud / clap / voice / silence の検出（closeWindow 内 O(1)、`detectEvents`）+ `PUT /mic/params` ライブ調整 + イベントリング（`GET /mic` の `events`/`state`）+ UDP ストリームの `ev` フィールド + `onMicEvent(cb)` 購読 API（3c 用）。settings-bar のビープにも suspend/resume を配線済み
+  - 校正セッション（2026-07-07、デバイスから 1〜2m）による閾値既定値: 拍手 = peak 6,100〜20,300・**peak/rms 比 13〜17**、声 = rms 100〜165・比 2〜3.4、静音フロア = rms 中央値 24・最大 99 → `loud.peakMin 3000 / clap.ratioMin 8 / voice.rmsMin 110×3窓 / silence.rmsMax 60×5分`
+  - 検証中に実環境音が校正どおり判別された（clap 比 16.2・25.8、voice 比 3.0）。murmur は suspend/resume ハンドシェイクにより自己イベント誤検出ゼロ
+- [ ] **3b+ 方向推定**（ユーザー要望 2026-07-07: 「大きな音が鳴った方を向く」）: CoreS3 のデュアルマイクは既にステレオ 2ch で届いている。loud チャンク内で TDOA（L/R 相互相関、ラグ ±4 サンプル @16kHz、マイク間隔 ~4cm → 実効 ±2）+ レベル差（ILD）補助 → **左/中/右 3〜5 バケット**。対象は破裂音のみ（連続音は反響で不可）。計算は loud イベント時のみ数 ms。これが入ると ELEGNT 台帳の「方向つき一瞥」が解禁（能力の正直さ充足）。L/R チャンネルと物理配置の対応は左右拍手の検証セッションで実地確定する
 - [ ] **3c 総合的な動きの作り込み**: 顔・音・サーボを組み合わせた反応を**一つずつ**（例: 大きな音 → startle 鳴き + まばたき + 呼吸一拍止め。「間」の原則 = 反応まで 300ms〜1.5s の余白）。**設計台帳: `docs/tasks/elegnt-expression-design.md`**（ELEGNT の 4 語彙 intention/attention/attitude/emotion × StackChan アセットのマップ、実装順、ガードレール）
 - [ ] 頭頂タッチの微反応
 - [ ] IMU 反応の試行（オフ既定）
