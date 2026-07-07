@@ -204,8 +204,7 @@ journal とセットで、次のような **版ラベル** を付けて観察し
 
 | 役割 | パス |
 |---|---|
-| upstream ファームウェア | `stack-chan/firmware/`（サブモジュール） |
-| パッチ・スクリプト | `overlay/patches/`, `overlay/firmware/scripts/` |
+| ファームウェア | `stack-chan/firmware/`（fork サブモジュール、`breath` ブランチ。直接編集・コミット） |
 | 探求用 MOD | `overlay/mods/` |
 | セットアップ | `scripts/stack-chan-setup.sh` |
 

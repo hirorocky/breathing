@@ -262,7 +262,7 @@ const aiPrefs = loadPreferences('ai')
 
 ### バッテリー残量（`m5stackchan_cores3` 限定、robot API ではない）
 
-Stack-chan専用ボード構成（`platforms/m5stackchan_cores3/`）では、`robot` のAPIではなく、ホストが提供する専用モジュール `m5stackchan/battery` からバッテリー残量を読みます（breathing overlay の `overlay/patches/firmware-platform-breath-battery.patch` で追加）。
+Stack-chan専用ボード構成（`platforms/m5stackchan_cores3/`）では、`robot` のAPIではなく、ホストが提供する専用モジュール `m5stackchan/battery` からバッテリー残量を読みます（fork `stack-chan/`、`breath` ブランチの `firmware/platforms/m5stackchan_cores3/` に直接追加）。
 
 ```js
 import { readBatterySample } from 'm5stackchan/battery'

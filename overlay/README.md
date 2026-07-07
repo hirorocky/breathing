@@ -1,19 +1,18 @@
 # overlay — breathing 固有の StackChan カスタマイズ
 
-upstream の [stack-chan/stack-chan](https://github.com/stack-chan/stack-chan) は **`stack-chan/` サブモジュール** で追跡する。本ディレクトリ **`overlay/`** に、パッチ・スクリプト・MOD・ドキュメントを置く（upstream 本体とは別）。
+`stack-chan/` サブモジュールは **fork [hirorocky/stack-chan](https://github.com/hirorocky/stack-chan) の `breath` ブランチ**を指す。ファームウェア本体の変更は submodule 内で直接編集・コミットする。本ディレクトリ **`overlay/`** には、MOD・スクリプト・ドキュメントを置く（submodule 本体とは別）。
 
 ## 構成
 
 | パス | 内容 |
 |---|---|
-| `../stack-chan/` | upstream（submodule、`develop`） |
-| `patches/` | upstream への git apply 用パッチ |
-| `firmware/scripts/mod-cores3.sh` | CoreS3 向け MOD 書き込みラッパー |
+| `../stack-chan/` | fork（submodule、`breath` ブランチ） |
 | `firmware/manifest_smoke_test.json` | スモークテスト用マニフェスト（deploy テンプレ） |
-| `firmware/manifest_breath_deploy.json` | v1.0.0 呼吸 MOD 用 deploy テンプレ（`default-mods/mod` を breath に差し替え） |
 | `mods/breath/` | v1.0.0 探求用 MOD（Layer 0 呼吸）+ v1.0.1 ステータスバー（時刻・バッテリー） |
 | `docs/my-cores3/` | CoreS3 / K151-R 向けカスタマイズガイド |
 | `mods/` | 探求用 MOD（breathing 固有） |
+
+breath 用 deploy マニフェスト（`manifest_breath_deploy.json`）と MOD 書き込みラッパー（`mod-cores3.sh`）の原本は fork 内 `stack-chan/firmware/stackchan/manifest_breath_deploy.json` / `stack-chan/firmware/scripts/mod-cores3.sh`。
 
 ## 初回セットアップ
 
@@ -45,8 +44,10 @@ npm run mod:m5stackchan-cores3 -- ../../overlay/mods/<mod>/manifest.json
 ## upstream 更新後
 
 ```bash
-git submodule update --remote stack-chan
-./scripts/stack-chan-setup.sh
+git -C stack-chan fetch upstream
+git -C stack-chan merge upstream/develop   # breath ブランチ上で
+# ビルド確認（stack-chan/firmware で npm run build:breath:m5stackchan-cores3）
+git -C stack-chan push origin breath
 ```
 
-パッチが当たらない場合は `overlay/patches/` を upstream の変更に合わせて更新する。
+push 後は breathing 側で `stack-chan` の gitlink 更新をコミットする（2 段コミット）。詳細: [CLAUDE.md](../CLAUDE.md) の「fork ブランチ運用」。

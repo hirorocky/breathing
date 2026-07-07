@@ -266,7 +266,7 @@ npm run dev
   - **切り分け**: ビルド成果物ディレクトリで `grep "setup.target" makefile` を実行し、`setup/target` というモジュール名を生成しているルールのソースパスが自分の `platforms/.../setup-target.js` を指しているか、SDK 側のパスを指しているか確認します。SDK側を指していれば、そのモジュール名では独自コードは実行されません。
   - **対処**: 同じモジュール名を奪い合うのではなく、別名のモジュール（例: `m5stackchan/battery` のような専用モジュール）を manifest に登録し、SDK が生成する `host/provider.js` 側のフックから呼び出す構成にします（次項参照）。
 - **AXP2101 へのI2Cアクセスで `RangeError: duplicate address (in I2C)`**: SDK側の `setup-target.js` が起動時に `globalThis.power = new Power(...)` を実行し、AXP2101（I2C 0x34）のI2Cハンドルを保持したまま `#axp2101` のようなプライベートフィールドに隠しています。この状態で別途 `new SMBus({ address: 0x34, ... })` を開こうとすると、同一アドレスの二重オープンとして例外になります。
-  - **対処**: 別インスタンスを開くのではなく、SDKが内部で使う `SMBus` クラス自体を `host/provider.js` でラップして捕獲します（`class BreathSMBus extends SMBus { constructor(options) { super(options); if (options?.address === 0x34) registerPowerIO(this) } }` を `device.io.SMBus` に差し替える）。これにより、SDKが生成する**同一のI2Cハンドル**を読み取り専用に使い回せます。実装は `overlay/patches/firmware-platform-breath-battery.patch`（`host/provider.js` / `battery-registry.js`）を参照してください。
+  - **対処**: 別インスタンスを開くのではなく、SDKが内部で使う `SMBus` クラス自体を `host/provider.js` でラップして捕獲します（`class BreathSMBus extends SMBus { constructor(options) { super(options); if (options?.address === 0x34) registerPowerIO(this) } }` を `device.io.SMBus` に差し替える）。これにより、SDKが生成する**同一のI2Cハンドル**を読み取り専用に使い回せます。実装は fork（`stack-chan/`、`breath` ブランチ）内の `firmware/platforms/m5stackchan_cores3/host/provider.js` / `battery-registry.js` を参照してください。
 
 ## 8. ヘッドレスでのログ採取（`xsbug` GUIなしでシリアルログを読む）
 

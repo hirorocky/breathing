@@ -15,7 +15,7 @@ Web 版（v0.1.0 / v0.2.0）の実装は git 履歴に残している。**v1.0.0
 
 ## StackChan 開発環境
 
-upstream は **`stack-chan/` サブモジュール**（[stack-chan/stack-chan](https://github.com/stack-chan/stack-chan)）。パッチ・MOD・ドキュメントは **`overlay/`** に置く。
+`stack-chan/` サブモジュールは **fork [hirorocky/stack-chan](https://github.com/hirorocky/stack-chan) の `breath` ブランチ**を指す。ファームウェア変更は submodule 内で直接編集・コミットする。MOD・スクリプト・ドキュメントは **`overlay/`** に置く。
 
 ### 初回
 
@@ -42,11 +42,13 @@ npm run mod:m5stackchan-cores3 -- ./mods/<mod>/manifest.json
 ### upstream 更新後
 
 ```bash
-git submodule update --remote stack-chan
-./scripts/stack-chan-setup.sh
+git -C stack-chan fetch upstream
+git -C stack-chan merge upstream/develop   # breath ブランチ上で
+# ビルド確認（stack-chan/firmware で npm run build:breath:m5stackchan-cores3）
+git -C stack-chan push origin breath
 ```
 
-`stack-chan/` 内にパッチ適用後の差分が出るのは正常。**サブモジュール側ではコミットしない。**
+`stack-chan/` は fork の `breath` ブランチ。ファーム変更は submodule 内で直接コミットし `origin breath`（fork、ssh push）へ push する。upstream（本家）へは push しない。push 後は breathing 側で `stack-chan` の gitlink 更新をコミットする（2 段コミット）。
 
 ## エージェント（Claude / Codex）
 

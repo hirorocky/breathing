@@ -197,3 +197,7 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
 
 - [ ] v1.0.2: 再起動後の明るさ・音量保持の受動確認（次回電源断時に設定バーを見るだけ）
 - [ ] 開発環境 Phase 3（任意）: OTA ロールバック / trace リングバッファ + `GET /logs` / OTA 中の呼吸停止
+
+## 完了記録
+
+- [x] **2026-07-07 stack-chan を fork の breath ブランチへ移行（パッチ方式廃止）**: `.gitmodules` を fork [hirorocky/stack-chan](https://github.com/hirorocky/stack-chan) の `breath` ブランチへ切替（origin = fork・ssh push、upstream = 本家・push disabled）。`overlay/patches/` による `git apply` + dirty submodule 方式を廃止し、ファーム変更は submodule 内で直接編集・コミット → `push origin breath` → breathing 側で gitlink 更新をコミットする 2 段運用に統一。deploy マニフェスト（`manifest_breath_deploy.json`）・`mod-cores3.sh` の原本も fork 内へ移動。改変ファイル一覧は fork 直下 `BREATH-CHANGES.md`（Apache-2.0 §4(b)）で管理
