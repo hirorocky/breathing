@@ -312,6 +312,21 @@ export function requestDeepBreath() {
   return true
 }
 
+/**
+ * リアクション(breath/reactions 等、v1.1.0 Phase 3c)が視線を占有する間、gaze
+ * スケジューラの次回発火を先送りする。保留中のタイマーを破棄し、`ms` 後に
+ * scheduleNextGaze() を仕掛け直すだけ(started ガード付き。既存の
+ * clearGazeTimers/scheduleNextGaze を再利用するのみで、他のロジックは変更しない)。
+ */
+export function deferGaze(ms) {
+  if (!started) return
+  clearGazeTimers()
+  gazeTimerId = Timer.set(() => {
+    gazeTimerId = null
+    scheduleNextGaze()
+  }, ms)
+}
+
 /** POST /live/gaze(チューニング用): 視線イベントを即時発火する(以後のスケジュールは通常に戻る)。 */
 export function triggerGaze() {
   if (!started || !robotRef) return false

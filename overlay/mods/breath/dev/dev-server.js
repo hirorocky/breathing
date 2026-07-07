@@ -13,6 +13,7 @@ import { readBatterySample } from 'm5stackchan/battery'
 import { CRY_NAMES, getRecipes, playCry, setRecipes } from 'breath/cry'
 import { getParams, setParams, requestDeepBreath, triggerGaze } from 'breath/liveliness'
 import { getMicStatus, setMicParams } from 'breath/mic'
+import { getReactParams, setReactParams, triggerStartle } from 'breath/reactions'
 
 /**
  * Wi-Fi 開発環境 Phase 1/2 — GET /status・PUT /ota + mDNS（v1.0.1 dev tools）。
@@ -493,6 +494,210 @@ const micParamsRoute = {
   },
 }
 
+/**
+ * GET /react。reactions(v1.1.0 Phase 3c #1 — startle + 方向つき一瞥)の現在パラメータ。
+ * 本体は小さい JSON なので溜めてから処理する(paramsRoute と同型)。
+ */
+const reactRoute = {
+  onRequest(request) {
+    this.sent = 0
+    if ('GET' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    try {
+      this.status = 200
+      this.data = ArrayBuffer.fromString(JSON.stringify(getReactParams()))
+    } catch (error) {
+      trace(`[dev] react params build failed: ${error}\n`)
+      this.status = 500
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    try {
+      this.read(count)
+    } catch (_error) {
+      // 握りつぶす。body は想定しないが読み切ってハングを避ける。
+    }
+  },
+  onResponse(response) {
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] react connection error: ${message}\n`)
+  },
+}
+
+/** PUT /react/params(要 x-dev-token)。部分更新(paramsRoute の PUT 分岐と同型)。 */
+const reactParamsRoute = {
+  onRequest(request) {
+    this.method = request.method
+    this.sent = 0
+    this.chunks = []
+
+    if ('PUT' === request.method) {
+      if (!isAuthorized(request)) {
+        this.status = 401
+        this.data = ArrayBuffer.fromString('')
+        trace('[dev] react params rejected: bad or missing x-dev-token\n')
+      } else {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      }
+    } else {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] react params read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if ('PUT' === this.method && 200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const params = setReactParams(body)
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: true, params }))
+      } catch (error) {
+        trace(`[dev] react params update failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] react params connection error: ${message}\n`)
+  },
+}
+
+/**
+ * POST /react/startle(要 x-dev-token)。body JSON `{"dir": 1}`(-1/0/1、省略時は
+ * ランダム)で拍手なしの目視テストを行う(Loop C / Phase 3c の心臓部)。本体は
+ * 小さい JSON なので溜めてから処理する(cryRecipesRoute の PUT 分岐と同型)。
+ */
+const reactStartleRoute = {
+  onRequest(request) {
+    this.sent = 0
+    this.chunks = []
+
+    if ('POST' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    if (!isAuthorized(request)) {
+      this.status = 401
+      this.data = ArrayBuffer.fromString('')
+      trace('[dev] react startle rejected: bad or missing x-dev-token\n')
+      return
+    }
+    this.status = 200 // 本文を読み終えてから onResponse で確定する
+  },
+  onReadable(count) {
+    // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] react startle read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if (200 === this.status && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if (200 === this.status) {
+      try {
+        let dir
+        if (this.chunks.length) {
+          let total = 0
+          for (const chunk of this.chunks) total += chunk.byteLength
+          const merged = new Uint8Array(total)
+          let offset = 0
+          for (const chunk of this.chunks) {
+            merged.set(new Uint8Array(chunk), offset)
+            offset += chunk.byteLength
+          }
+          const text = String.fromArrayBuffer(merged.buffer)
+          if (text.trim()) {
+            const body = JSON.parse(text)
+            dir = body?.dir
+          }
+        }
+        const ok = triggerStartle(dir)
+        this.status = ok ? 200 : 503
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok }))
+      } catch (error) {
+        trace(`[dev] react startle failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] react startle connection error: ${message}\n`)
+  },
+}
+
 /** POST /cry/<name>。キャッシュ済みバッファを即再生する（Loop A の心臓部）。 */
 function makeCryPlayRoute(name) {
   return {
@@ -604,6 +809,9 @@ const router = new Map([
   ['/params', paramsRoute],
   ['/mic', micRoute],
   ['/mic/params', micParamsRoute],
+  ['/react', reactRoute],
+  ['/react/params', reactParamsRoute],
+  ['/react/startle', reactStartleRoute],
 ])
 
 const CRY_PLAY_PREFIX = '/cry/'

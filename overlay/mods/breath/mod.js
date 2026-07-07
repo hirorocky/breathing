@@ -6,6 +6,7 @@ import { startDevTools } from 'breath/dev/dev-tools'
 import { initCry } from 'breath/cry'
 import { startLiveliness, shouldDeepBreathe, getDeepBreathParams, maybeSighForDeepBreath } from 'breath/liveliness'
 import { startMic } from 'breath/mic'
+import { startReactions } from 'breath/reactions'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
@@ -148,6 +149,15 @@ export function onRobotCreated(robot) {
       trace(`[mic] start failed: ${error}\n`)
     }
   }, 6000)
+
+  // v1.1.0 Phase 3c #1 — startle + 方向つき一瞥(mic の loud/clap イベントに反応)。
+  Timer.set(() => {
+    try {
+      startReactions(robot)
+    } catch (error) {
+      trace(`[react] start failed: ${error}\n`)
+    }
+  }, 7000)
 }
 
 export default {

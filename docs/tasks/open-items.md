@@ -176,7 +176,11 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
   - 方向バケット案: `|lagX100| >= 60` で左右、それ未満は中央（3c でライブ調整）
   - 既知の限界: 至近の爆音は ADC クリップ（peak 32768）でラグの大きさが 0 寄りに潰れる（符号は保たれる）→ 3c は「符号は信じる・大きさは参考」で設計。連続音（声）の方向推定は対象外のまま
   - 教訓: 拍手の方向情報は直接音の最初の 1〜2ms にしかない。ピーク基準の広い窓は部屋の反射音が支配して方向と無関係のラグを出す
-- [ ] **3c 総合的な動きの作り込み**: 顔・音・サーボを組み合わせた反応を**一つずつ**（例: 大きな音 → startle 鳴き + まばたき + 呼吸一拍止め。「間」の原則 = 反応まで 300ms〜1.5s の余白）。**設計台帳: `docs/tasks/elegnt-expression-design.md`**（ELEGNT の 4 語彙 intention/attention/attitude/emotion × StackChan アセットのマップ、実装順、ガードレール）
+- [ ] **3c 総合的な動きの作り込み**: 顔・音・サーボを組み合わせた反応を**一つずつ**。**設計台帳: `docs/tasks/elegnt-expression-design.md`**（ELEGNT の 4 語彙 intention/attention/attitude/emotion × StackChan アセットのマップ、実装順、ガードレール）
+  - [x] **ステップ 1「startle + 方向つき一瞥」実装・配備**（2026-07-07、`overlay/mods/breath/reactions.js`）: clap/loud → 不応期 8s → 間 200〜600ms → 音のした側へ `lookAt`（lagX100 の符号、`|lag|<60` は正面、`invert` フラグあり）→ 1〜2.5s 保持 → 中央へ。15% で startle 鳴き。一瞥中は liveliness の `deferGaze(ms)` で idle 視線を抑制。`GET/PUT /react(/params)` + `POST /react/startle`（手動発火、dir 指定可）。実機で実際の拍手 → 自動発火まで確認済み
+  - [x] 検証中に発見・修正: **capture 再開直後 ~300ms の ADC 過渡ポップ**（peak 20480・片チャンネルのみ）が偽 clap になる → mic.js に再開後 400ms のイベントミュート（`armPostRestartMute`。rms/peak の観測は止めない）。修正後 murmur×3 + startle 鳴きで自己トリガゼロ
+  - [ ] ユーザー目視: 一瞥の方向が音源と一致するか（**invert 未検証** — 逆なら `PUT /react/params {"glance":{"invert":true}}`）、間・保持・戻りの質感、cry 頻度 15% の体感
+  - [ ] 次ステップ候補（台帳順）: 一瞥（voice 立ち上がり）→ γ(場) 勾配（silence/voiceActive で liveliness パラメータ切替）→ 深呼吸の予備動作
 - [ ] 頭頂タッチの微反応
 - [ ] IMU 反応の試行（オフ既定）
 

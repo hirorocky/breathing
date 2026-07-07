@@ -24,6 +24,7 @@
     "breath/cry": "../../../overlay/mods/breath/cry",
     "breath/liveliness": "../../../overlay/mods/breath/liveliness",
     "breath/mic": "../../../overlay/mods/breath/mic",
+    "breath/reactions": "../../../overlay/mods/breath/reactions",
     "breath/param-store": "../../../overlay/mods/breath/param-store",
     "renderer-breath": "../../../overlay/mods/breath/face/renderer-breath",
     "breath-face": "../../../overlay/mods/breath/face/breath-face",

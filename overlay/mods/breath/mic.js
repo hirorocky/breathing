@@ -131,6 +131,21 @@ let streamTimerId = null
 let zeroStreak = 0
 let lastZeroRestartTicks = -Infinity
 
+// v1.1.0 Phase 3c 追記 — capture 再開直後のミュート窓。cry.js の suspendCapture/
+// resumeCapture ハンドシェイク越しに breath/reactions の 'clap' 反応を実機検証した際、
+// resumeCapture() の ~300ms 後に peak=20480・l0=484 対 l1=40(片チャンネルのみ)という
+// 極端な peak/rms 比のイベントが observed(2026-07-07)。両チャンネル非対称・純粋な
+// インパルス的特徴は、室内の残響ではなく AudioIn 再起動直後の ADC/コーデック側の
+// 過渡応答(ポップ)である可能性が高い。capture を再起動する経路(resumeCapture /
+// ゼロ・ストール復旧)の直後は一時的にイベント検出だけを止める(rms/peak の記録・
+// リング・ストリームは通常どおり続ける — 観測を止めない)。
+const POST_RESTART_MUTE_MS = 400
+let muteEventsUntilTicks = -Infinity
+
+function armPostRestartMute(now) {
+  muteEventsUntilTicks = now + POST_RESTART_MUTE_MS
+}
+
 let lastWindow = { t: 0, rms: 0, peak: 0 }
 const ring = []
 
@@ -507,7 +522,7 @@ function closeWindow(now) {
     avgProcUsEma = avgProcUsEma == null ? avgUsThisWindow : avgProcUsEma + PROC_US_EMA_ALPHA * (avgUsThisWindow - avgProcUsEma)
   }
 
-  detectEvents(now, rms, peak)
+  if (now >= muteEventsUntilTicks) detectEvents(now, rms, peak)
 
   checkZeroStall(now)
 
@@ -555,6 +570,7 @@ function restartCaptureForZeroStall(now) {
     resetWindowAccumulators(now)
     micRef.start()
     running = true
+    armPostRestartMute(now)
   } catch (error) {
     trace(`[mic] zero-stall restart failed: ${error}\n`)
     running = false
@@ -631,10 +647,12 @@ function applyEnabled() {
   if (!micRef) return
   if (params.enabled && !running) {
     try {
-      resetWindowAccumulators(Time.ticks)
+      const now = Time.ticks
+      resetWindowAccumulators(now)
       resetZeroStallCounter()
       micRef.start()
       running = true
+      armPostRestartMute(now)
       trace('[mic] capture started\n')
     } catch (error) {
       trace(`[mic] start failed: ${error}\n`)
@@ -690,10 +708,12 @@ export function resumeCapture() {
     suspended = false
     if (!micRef || !params.enabled || running) return
     try {
-      resetWindowAccumulators(Time.ticks)
+      const now = Time.ticks
+      resetWindowAccumulators(now)
       resetZeroStallCounter()
       micRef.start()
       running = true
+      armPostRestartMute(now)
       trace('[mic] capture resumed\n')
     } catch (error) {
       trace(`[mic] resume start failed: ${error}\n`)
