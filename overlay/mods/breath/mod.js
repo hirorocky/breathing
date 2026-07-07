@@ -7,6 +7,7 @@ import { initCry } from 'breath/cry'
 import { startLiveliness, shouldDeepBreathe, getDeepBreathParams, maybeSighForDeepBreath } from 'breath/liveliness'
 import { startMic } from 'breath/mic'
 import { startReactions } from 'breath/reactions'
+import { startEmotion, getEmotion } from 'breath/emotion'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
@@ -51,8 +52,21 @@ async function runBreathCycle(robot) {
   const scale = isDeepBreath ? deepParams.scale : 1
   const peakMouthOpen = isDeepBreath ? Math.min(MOUTH_INHALE * deepParams.mouthScale, MOUTH_DEEP_MAX) : MOUTH_INHALE
 
-  const inhale = jitter(INHALE_SEC) * scale
-  const exhale = jitter(EXHALE_SEC) * scale
+  // v1.2.0 (E1) — 感情エンジンの breathFactor(覚醒で呼吸が速く・沈静で遅く)を
+  // 1 個だけ読んで乗算する。emotion 不在/失敗時は 1(無変調)にフォールバックする。
+  // クランプ 0.85〜1.25 は emotion.js 側で既に保証しているが、呼吸を壊さないよう
+  // 呼び出し側でも同じ範囲に再クランプする(呼吸ループの構造自体は変えない)。
+  let breathFactor = 1
+  try {
+    breathFactor = getEmotion()?.modifiers?.breathFactor ?? 1
+  } catch (error) {
+    trace(`[breath] emotion query failed: ${error}\n`)
+    breathFactor = 1
+  }
+  breathFactor = Math.min(1.25, Math.max(0.85, breathFactor))
+
+  const inhale = jitter(INHALE_SEC) * scale * breathFactor
+  const exhale = jitter(EXHALE_SEC) * scale * breathFactor
   await animateMouth(robot, MOUTH_EXHALE, peakMouthOpen, inhale * 1000)
 
   if (isDeepBreath) {
@@ -158,6 +172,15 @@ export function onRobotCreated(robot) {
       trace(`[react] start failed: ${error}\n`)
     }
   }, 7000)
+
+  // v1.2.0 (E1) — 感情 2 次元エンジン(v/a の指数回帰・イベント入力・表情への配線)。
+  Timer.set(() => {
+    try {
+      startEmotion(robot)
+    } catch (error) {
+      trace(`[emotion] start failed: ${error}\n`)
+    }
+  }, 8000)
 }
 
 export default {

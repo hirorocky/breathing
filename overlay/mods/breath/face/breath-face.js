@@ -1,6 +1,6 @@
 import { FaceBase } from 'behaviors/face'
 import { createBlinkMotion } from 'motions/blink'
-import { CozmoEye } from 'eye-cozmo'
+import { CozmoEye, TopLidOccluder, BotArcOccluder } from 'eye-cozmo'
 
 /**
  * v1.1.0 — breath-face(顔の再設計 B 案・Cozmo 理念)。口なし・目 2 つのみ。
@@ -54,6 +54,12 @@ export const BreathFace = FaceBase.template(($ = {}) => {
         radius: EYE_RADIUS,
         side: 'left',
       }),
+      // v1.2.0 (E1) — 表情変形(occluder)。目本体の直後に置くことで、同一フレーム内で
+      // globalThis.breathEyeRectL/R(目本体が書く)を occluder が読める(FaceBase の
+      // onFaceContext は distribute で全 contents に配られるため、実際は前後関係に
+      // 厳密には依存しないが、意図が伝わるようこの順で並べる)。
+      new TopLidOccluder({ cx: centerX - EYE_SPACING / 2, cy: EYE_CENTER_Y, width: EYE_WIDTH, height: EYE_HEIGHT, side: 'left' }),
+      new BotArcOccluder({ cx: centerX - EYE_SPACING / 2, cy: EYE_CENTER_Y, width: EYE_WIDTH, height: EYE_HEIGHT, side: 'left' }),
       new CozmoEye({
         cx: centerX + EYE_SPACING / 2,
         cy: EYE_CENTER_Y,
@@ -62,6 +68,8 @@ export const BreathFace = FaceBase.template(($ = {}) => {
         radius: EYE_RADIUS,
         side: 'right',
       }),
+      new TopLidOccluder({ cx: centerX + EYE_SPACING / 2, cy: EYE_CENTER_Y, width: EYE_WIDTH, height: EYE_HEIGHT, side: 'right' }),
+      new BotArcOccluder({ cx: centerX + EYE_SPACING / 2, cy: EYE_CENTER_Y, width: EYE_WIDTH, height: EYE_HEIGHT, side: 'right' }),
     ],
   }
 })

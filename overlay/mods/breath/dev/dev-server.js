@@ -11,9 +11,21 @@ import config from 'mc/config'
 import Time from 'time'
 import { readBatterySample } from 'm5stackchan/battery'
 import { CRY_NAMES, getRecipes, playCry, setRecipes } from 'breath/cry'
-import { getParams, setParams, requestDeepBreath, triggerGaze } from 'breath/liveliness'
+import { getParams, setParams, requestDeepBreath, triggerGaze, deferGaze } from 'breath/liveliness'
 import { getMicStatus, setMicParams } from 'breath/mic'
 import { getReactParams, setReactParams, triggerStartle } from 'breath/reactions'
+import {
+  getEmotion,
+  setEmotionState,
+  pushTouch,
+  getEmotionParams,
+  setEmotionParams,
+  triggerSleepFlutter,
+  triggerRecoveryBoost,
+  forceVoiceActive,
+  forceNightMode,
+  startValenceDrift,
+} from 'breath/emotion'
 
 /**
  * Wi-Fi 開発環境 Phase 1/2 — GET /status・PUT /ota + mDNS（v1.0.1 dev tools）。
@@ -804,6 +816,524 @@ const LIVE_ACTIONS = {
   gaze: triggerGaze, // 視線イベントを即時発火
 }
 
+// ---------------------------------------------------------------------------
+// GET/PUT /emotion・POST /emotion/{touch,scenario}・GET /emotion/scenarios
+// (v1.2.0 E1 — 感情 2 次元エンジン)。
+//
+// クロスモジュールな複合アクション(視線バースト・startle 流用・鳴き声トリガ)は
+// emotion.js に持たせず、既存の LIVE_ACTIONS と同じ「dev-server がオーケストレーション
+// する」形にする(emotion.js が breath/liveliness・breath/reactions を import すると
+// それらが emotion.js を import し返す循環 import になるため — この層で合成する)。
+// ---------------------------------------------------------------------------
+
+const SCENARIOS = [
+  { id: 1, name: 'ごきげん' },
+  { id: 2, name: 'はしゃぎ疲れ' },
+  { id: 3, name: 'まどろみ' },
+  { id: 4, name: '寝起きの微覚醒' },
+  { id: 5, name: '不機嫌' },
+  { id: 6, name: '疑心暗鬼' },
+  { id: 7, name: '驚きの色分け' },
+  { id: 8, name: '好奇心' },
+  { id: 9, name: '退屈' },
+  { id: 10, name: '退屈の自己刺激' },
+  { id: 11, name: 'かまってもらえた' },
+  { id: 12, name: '触られすぎ' },
+  { id: 13, name: '萎縮' },
+  { id: 14, name: 'にぎやかな部屋' },
+  { id: 15, name: '静かな作業部屋' },
+  { id: 16, name: '朝の立ち上がり' },
+  { id: 17, name: '夜更け' },
+  { id: 18, name: '機嫌の回復儀式' },
+  { id: 19, name: 'いじけ' },
+  { id: 20, name: '場の共鳴' },
+]
+
+let lastScenario = null // { id, name, t } — GET /emotion の scenarioLast
+
+function touchBurst(count, intervalMs) {
+  for (let i = 0; i < count; i++) {
+    Timer.set(() => {
+      try {
+        pushTouch()
+      } catch (error) {
+        trace(`[dev] scenario touch burst failed: ${error}\n`)
+      }
+    }, i * intervalMs)
+  }
+}
+
+function gazeBurst(count, intervalMs) {
+  for (let i = 0; i < count; i++) {
+    Timer.set(() => {
+      try {
+        triggerGaze()
+      } catch (error) {
+        trace(`[dev] scenario gaze burst failed: ${error}\n`)
+      }
+    }, i * intervalMs)
+  }
+}
+
+/**
+ * docs/tasks/emotion-space-scenarios.md のシナリオ 20 表に対応するデモ実行。
+ * 実際の質感確認はユーザーに委ねる(合格ラインはクラッシュ・再起動がないこと)。
+ * 未知の id は false を返す(呼び出し側で 400 にする)。
+ */
+function runScenario(id) {
+  switch (id) {
+    case 1:
+      setEmotionState(0.7, 0.3)
+      return true
+    case 2:
+      setEmotionState(0.8, 0.9) // 以後は自然減衰(このメソッドは何もしない)を観察する
+      return true
+    case 3:
+      setEmotionState(0.4, -0.7)
+      return true
+    case 4:
+      setEmotionState(0.3, -0.8)
+      Timer.set(() => triggerSleepFlutter(), 800)
+      return true
+    case 5:
+      setEmotionState(-0.6, -0.1)
+      return true
+    case 6:
+      setEmotionState(-0.6, 0.5)
+      return true
+    case 7:
+      triggerStartle() // 状態はそのまま(reactions の startle を流用)
+      return true
+    case 8:
+      setEmotionState(0.3, 0.4)
+      triggerGaze()
+      deferGaze(3000) // 長い注視(次の gaze スケジューラを 3 秒抑止)
+      return true
+    case 9:
+      setEmotionState(-0.2, -0.5)
+      return true
+    case 10:
+      gazeBurst(3, 1000) // キョロキョロバースト
+      Timer.set(() => {
+        try {
+          playCry('murmur')
+        } catch (error) {
+          trace(`[dev] scenario10 murmur failed: ${error}\n`)
+        }
+      }, 500)
+      return true
+    case 11:
+      pushTouch()
+      return true
+    case 12:
+      touchBurst(5, 150) // 短時間の連続タッチ(触られすぎ)
+      return true
+    case 13:
+      setEmotionState(-0.5, -0.4)
+      return true
+    case 14:
+      setEmotionState(0.3, 0.1)
+      forceVoiceActive(30000) // voiceActive 相当を 30 秒維持
+      return true
+    case 15:
+      setEmotionState(0.2, -0.5)
+      return true
+    case 16:
+      setEmotionState(0, -0.6)
+      return true
+    case 17:
+      setEmotionState(0.1, 0)
+      forceNightMode(600000) // 夜間クランプを 10 分間強制
+      return true
+    case 18:
+      triggerGaze() // 様子を見る一瞥
+      Timer.set(() => {
+        try {
+          const emo = getEmotion()
+          setEmotionState(Math.min(1, emo.v + 0.35), emo.a) // smile 一瞬(v を短時間ブースト)
+          triggerRecoveryBoost(8000, 4) // ベースラインへ加速回帰
+        } catch (error) {
+          trace(`[dev] scenario18 recovery step failed: ${error}\n`)
+        }
+      }, 1000)
+      return true
+    case 19:
+      setEmotionState(-0.8, -0.5)
+      return true
+    case 20:
+      startValenceDrift(0.002, 300000) // v ドリフト +0.02/10s を 5 分
+      return true
+    default:
+      return false
+  }
+}
+
+function buildEmotionPayload() {
+  return { ...getEmotion(), scenarioLast: lastScenario }
+}
+
+/** GET /emotion。本体は小さい JSON なので溜めずにその場で組み立てる(statusRoute と同型)。 */
+const emotionRoute = {
+  onRequest(request) {
+    this.sent = 0
+    if ('GET' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    try {
+      this.status = 200
+      this.data = ArrayBuffer.fromString(JSON.stringify(buildEmotionPayload()))
+    } catch (error) {
+      trace(`[dev] emotion build failed: ${error}\n`)
+      this.status = 500
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    try {
+      this.read(count)
+    } catch (_error) {
+      // 握りつぶす。body は想定しないが読み切ってハングを避ける。
+    }
+  },
+  onResponse(response) {
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] emotion connection error: ${message}\n`)
+  },
+}
+
+/** PUT /emotion/state(要 x-dev-token)。body `{"v":0.5,"a":-0.3}`(cryRecipesRoute の PUT 分岐と同型)。 */
+const emotionStateRoute = {
+  onRequest(request) {
+    this.sent = 0
+    this.chunks = []
+    if ('PUT' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    if (!isAuthorized(request)) {
+      this.status = 401
+      this.data = ArrayBuffer.fromString('')
+      trace('[dev] emotion state rejected: bad or missing x-dev-token\n')
+      return
+    }
+    this.status = 200
+  },
+  onReadable(count) {
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] emotion state read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if (200 === this.status && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if (200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const emo = setEmotionState(body?.v, body?.a)
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: true, emotion: emo }))
+      } catch (error) {
+        trace(`[dev] emotion state update failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] emotion state connection error: ${message}\n`)
+  },
+}
+
+/** GET /emotion/params・PUT /emotion/params(要 x-dev-token)。paramsRoute と同型。 */
+const emotionParamsRoute = {
+  onRequest(request) {
+    this.method = request.method
+    this.sent = 0
+    this.chunks = []
+
+    if ('GET' === request.method) {
+      try {
+        this.status = 200
+        this.data = ArrayBuffer.fromString(JSON.stringify(getEmotionParams()))
+      } catch (error) {
+        trace(`[dev] emotion params build failed: ${error}\n`)
+        this.status = 500
+        this.data = ArrayBuffer.fromString('')
+      }
+    } else if ('PUT' === request.method) {
+      if (!isAuthorized(request)) {
+        this.status = 401
+        this.data = ArrayBuffer.fromString('')
+        trace('[dev] emotion params rejected: bad or missing x-dev-token\n')
+      } else {
+        this.status = 200
+      }
+    } else {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] emotion params read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if ('PUT' === this.method && 200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const params = setEmotionParams(body)
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: true, params }))
+      } catch (error) {
+        trace(`[dev] emotion params update failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] emotion params connection error: ${message}\n`)
+  },
+}
+
+/** POST /emotion/touch(要 x-dev-token)。物理タッチ配線なしの代替(シナリオ11/12)。 */
+const emotionTouchRoute = {
+  onRequest(request) {
+    this.sent = 0
+    if ('POST' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    if (!isAuthorized(request)) {
+      this.status = 401
+      this.data = ArrayBuffer.fromString('')
+      trace('[dev] emotion touch rejected: bad or missing x-dev-token\n')
+      return
+    }
+    try {
+      const ok = pushTouch()
+      this.status = ok ? 200 : 503
+      this.data = ArrayBuffer.fromString(JSON.stringify({ ok, emotion: getEmotion() }))
+    } catch (error) {
+      trace(`[dev] emotion touch failed: ${error}\n`)
+      this.status = 500
+      this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+    }
+  },
+  onReadable(count) {
+    try {
+      this.read(count)
+    } catch (_error) {
+      // 握りつぶす。
+    }
+  },
+  onResponse(response) {
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] emotion touch connection error: ${message}\n`)
+  },
+}
+
+/** POST /emotion/scenario(要 x-dev-token)。body `{"id": 1}`。GET /emotion/scenarios で一覧。 */
+const emotionScenarioRoute = {
+  onRequest(request) {
+    this.sent = 0
+    this.chunks = []
+    if ('POST' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    if (!isAuthorized(request)) {
+      this.status = 401
+      this.data = ArrayBuffer.fromString('')
+      trace('[dev] emotion scenario rejected: bad or missing x-dev-token\n')
+      return
+    }
+    this.status = 200
+  },
+  onReadable(count) {
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] emotion scenario read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if (200 === this.status && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if (200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const id = Number(body?.id)
+        const entry = SCENARIOS.find((s) => s.id === id)
+        const ok = entry ? runScenario(id) : false
+        if (ok) lastScenario = { id, name: entry.name, t: Time.ticks }
+        this.status = ok ? 200 : 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok, id, name: entry?.name }))
+        trace(`[dev] emotion scenario ${id} (${entry?.name ?? 'unknown'}) -> ${ok ? 'ok' : 'failed'}\n`)
+      } catch (error) {
+        trace(`[dev] emotion scenario failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] emotion scenario connection error: ${message}\n`)
+  },
+}
+
+/** GET /emotion/scenarios。id と名前の一覧。 */
+const emotionScenariosRoute = {
+  onRequest(request) {
+    this.sent = 0
+    if ('GET' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    this.status = 200
+    this.data = ArrayBuffer.fromString(JSON.stringify({ scenarios: SCENARIOS }))
+  },
+  onReadable(count) {
+    try {
+      this.read(count)
+    } catch (_error) {
+      // 握りつぶす。
+    }
+  },
+  onResponse(response) {
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] emotion scenarios connection error: ${message}\n`)
+  },
+}
+
 const router = new Map([
   ['/status', statusRoute],
   ['/ota', otaRoute],
@@ -814,6 +1344,12 @@ const router = new Map([
   ['/react', reactRoute],
   ['/react/params', reactParamsRoute],
   ['/react/startle', reactStartleRoute],
+  ['/emotion', emotionRoute],
+  ['/emotion/state', emotionStateRoute],
+  ['/emotion/params', emotionParamsRoute],
+  ['/emotion/touch', emotionTouchRoute],
+  ['/emotion/scenario', emotionScenarioRoute],
+  ['/emotion/scenarios', emotionScenariosRoute],
 ])
 
 const CRY_PLAY_PREFIX = '/cry/'

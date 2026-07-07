@@ -1,6 +1,7 @@
 import Preference from 'preference'
 import Timer from 'timer'
 import { playCry } from 'breath/cry'
+import { getEmotion } from 'breath/emotion'
 
 /**
  * v1.1.0 Phase 2a — 生存感エンジン(目線の微揺らぎ・深呼吸・まれな murmur)。
@@ -149,6 +150,27 @@ function poissonIntervalMs(meanMs, minMs) {
   return Math.max(minMs, raw)
 }
 
+// v1.2.0 (E1) — 感情エンジンの speedFactor/gainFactor を読むだけの薄いヘルパー。
+// emotion 不在/失敗時は 1(無変調)にフォールバックする。スケジューラの構造自体は
+// 変えない(scheduleNext* の interval 計算に 1 行ずつ乗算するだけ)。
+function emotionSpeedFactor() {
+  try {
+    return getEmotion()?.modifiers?.speedFactor ?? 1
+  } catch (error) {
+    trace(`[live] emotion query failed: ${error}\n`)
+    return 1
+  }
+}
+
+function emotionGainFactor() {
+  try {
+    return getEmotion()?.modifiers?.gainFactor ?? 1
+  } catch (error) {
+    trace(`[live] emotion query failed: ${error}\n`)
+    return 1
+  }
+}
+
 function persistParams() {
   try {
     Preference.set(PREF_DOMAIN, PREF_KEY, JSON.stringify(params))
@@ -212,7 +234,7 @@ function scheduleNextGaze() {
     gazeTimerId = Timer.set(scheduleNextGaze, GAZE_DISABLED_POLL_MS)
     return
   }
-  const interval = poissonIntervalMs(cfg.meanIntervalMs, cfg.minIntervalMs)
+  const interval = poissonIntervalMs(cfg.meanIntervalMs, cfg.minIntervalMs) / Math.max(0.1, emotionSpeedFactor())
   gazeTimerId = Timer.set(() => {
     gazeTimerId = null
     try {
@@ -254,7 +276,7 @@ function scheduleNextMurmur() {
   }
   const meanMs = cfg.meanIntervalMin * MS_PER_MIN
   const minMs = cfg.minIntervalMin * MS_PER_MIN
-  const interval = poissonIntervalMs(meanMs, minMs)
+  const interval = poissonIntervalMs(meanMs, minMs) / Math.max(0.1, emotionGainFactor())
   murmurTimerId = Timer.set(() => {
     murmurTimerId = null
     performMurmurTick()

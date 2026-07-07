@@ -32,10 +32,24 @@ const MICRO_DRIFT_PERIOD_Y_MS = 5100
 const MICRO_DRIFT_Y_RATIO = 0.7
 const MIN_BLINK_HEIGHT_RATIO = 0.06 // Cozmo 流の「潰れるまばたき」の下限(0 だと完全に消える)
 const QUANTIZE_PX = 0.5
+const OCCLUDER_SMOOTH_RATIO = 0.15 // occluder の値平滑化(emotion.js の 1Hz tick を毎フレームなめらかに見せる)
+const MIN_VISIBLE_LID_RATIO = 0.02 // これ未満の topLid/botArc は非表示にする(空のパスを作らない)
+const OCCLUDER_FILL = '#000000' // 背景と同色(黒)。目の上に重ねて変形に見せる(Cozmo 手法)
 
 function quantize(value, step) {
   return Math.round(value / step) * step
 }
+
+// v1.2.0 (E1) — emotion.js が毎 tick(1Hz)書く感情由来の目のパラメータ
+// (globalThis.breathTopLid/breathTopAngleDeg/breathBotArc/breathEyeScale/breathEyeLift)。
+// occluder 側は同じ側の値をそのまま読む。ここでは eye 自身の eyeScale/eyeLift だけを
+// このモジュール内(update())で消費する。
+// eye-cozmo.js が毎フレーム書く「今フレームの最終的な目の矩形」(左右別)。occluder
+// (このファイル下部の TopLidOccluder/BotArcOccluder)がここを読んで自分の位置・幅を
+// 合わせる。フレームごとの再アロケーションを避けるため、オブジェクト自体はモジュール
+// ロード時に一度だけ作り、以後はフィールドをその場で書き換える。
+if (!globalThis.breathEyeRectL) globalThis.breathEyeRectL = { left: 0, top: 0, w: 0, h: 0 }
+if (!globalThis.breathEyeRectR) globalThis.breathEyeRectR = { left: 0, top: 0, w: 0, h: 0 }
 
 export const CozmoEye = Shape.template((opts) => {
   const cx = opts.cx
@@ -95,8 +109,11 @@ export const CozmoEye = Shape.template((opts) => {
         const mouthOpen = face.mouth?.open ?? BREATH_OPEN_MIN
         const pulse = Math.max(0, (mouthOpen - BREATH_OPEN_MIN) / BREATH_OPEN_RANGE)
         const breathDepth = globalThis.breathPulseDepth ?? BREATH_DEPTH_DEFAULT
-        const scaleY = 1 + pulse * breathDepth
-        const scaleX = 1 + pulse * breathDepth * BREATH_SCALE_X_RATIO
+        // v1.2.0 (E1) — emotion.js の eyeScale(1 + 0.06a)を脈動スケールに乗算する
+        // (覚醒で目が大きく・沈静で小さく。疑似プロクセミクス)。
+        const emoScale = globalThis.breathEyeScale ?? 1
+        const scaleY = (1 + pulse * breathDepth) * emoScale
+        const scaleX = (1 + pulse * breathDepth * BREATH_SCALE_X_RATIO) * emoScale
 
         const blinkOpen = eye ? Math.max(MIN_BLINK_HEIGHT_RATIO, eye.open) : 1
 
@@ -116,8 +133,11 @@ export const CozmoEye = Shape.template((opts) => {
         if (side === 'left') globalThis.breathDbgGazeL = gazeX
         else globalThis.breathDbgGazeR = gazeX
 
+        // v1.2.0 (E1) — emotion.js の eyeLift(a*4px)。覚醒で上へ(y は画面下方向が正なので減算)。
+        const emoLift = globalThis.breathEyeLift ?? 0
+
         const left = quantize(cx - w / 2 + gazeX + driftX, QUANTIZE_PX)
-        const top = quantize(cy - h / 2 + gazeY + driftY, QUANTIZE_PX)
+        const top = quantize(cy - h / 2 + gazeY + driftY - emoLift, QUANTIZE_PX)
 
         const sizeChanged = w !== this.lastOutlineW || h !== this.lastOutlineH
         if (sizeChanged) {
@@ -130,12 +150,214 @@ export const CozmoEye = Shape.template((opts) => {
           this.lastTop = top
           shape.coordinates = { left, top, width: w, height: h }
         }
+
+        // occluder(topLid/botArc)がこのフレームの最終矩形に追従するためのブリッジ。
+        // 事前に確保済みのオブジェクトのフィールドを書き換えるだけ(アロケーションなし)。
+        const rect = side === 'left' ? globalThis.breathEyeRectL : globalThis.breathEyeRectR
+        rect.left = left
+        rect.top = top
+        rect.w = w
+        rect.h = h
       }
 
       rebuildOutline(shape, w, h) {
         const path = Outline.RoundRectPath(0, 0, w, h, radius)
         shape.fillOutline = Outline.fill(path)
         shape.strokeOutline = undefined
+      }
+    },
+  }
+})
+
+/**
+ * v1.2.0 (E1) — 表情変形(B 案の occluder 方式)。目本体(CozmoEye)の Outline は
+ * 変えず、黒い遮蔽シェイプを目の上に重ねて変形に見せる(背景が黒なので遮蔽 = 変形。
+ * Cozmo と同じ手法)。breath-face.js が各 CozmoEye の直後にこれらを contents へ追加する。
+ *
+ * 位置合わせは globalThis.breathEyeRectL/R(CozmoEye が毎フレーム書く最終矩形)を読む。
+ * 形状パラメータ(topLid/topAngleDeg/botArc)は emotion.js が 1Hz で globalThis に書く
+ * 値をそのまま読み、occluder 側で軽く指数平滑化する(OCCLUDER_SMOOTH_RATIO)ことで
+ * 1 秒ごとの値更新を毎フレームなめらかに見せる(値そのものの補間は emotion.js ではなく
+ * 描画側の責務にして、emotion.js は単純な状態機械のままにする)。
+ */
+export const TopLidOccluder = Shape.template((opts) => {
+  const side = opts.side
+  const initialWidth = opts.width ?? 57
+  const initialHeight = opts.height ?? 68
+
+  return {
+    left: 0,
+    top: 0,
+    width: initialWidth,
+    height: initialHeight,
+    visible: false,
+    skin: new Skin({ fill: OCCLUDER_FILL }),
+    Behavior: class extends Behavior {
+      smLid = 0
+      lastW = -1
+      lastBottomLeft = -1
+      lastBottomRight = -1
+      lastLeft = Number.NaN
+      lastTop = Number.NaN
+
+      onCreate(shape) {
+        try {
+          const path = Outline.PolygonPath(0, 0, 1, 0, 1, 1, 0, 1)
+          shape.fillOutline = Outline.fill(path)
+          shape.strokeOutline = undefined
+        } catch (error) {
+          trace(`[breath-face] top-lid(${side}) onCreate failed: ${error}\n`)
+        }
+      }
+
+      onFaceContext(shape, face) {
+        try {
+          this.update(shape, face)
+        } catch (error) {
+          trace(`[breath-face] top-lid(${side}) onFaceContext failed: ${error}\n`)
+        }
+      }
+
+      update(shape, face) {
+        const rect = side === 'left' ? globalThis.breathEyeRectL : globalThis.breathEyeRectR
+        if (!rect || rect.w <= 0) {
+          shape.visible = false
+          return
+        }
+
+        const eye = face.eyes?.[side]
+        const blinkOpen = eye ? eye.open : 1
+        const emoTopLid = globalThis.breathTopLid ?? 0
+        // まばたき(eye.open)との合成は「小さい方の開き」を採用(= より閉じた方が勝つ)。
+        const targetLid = Math.max(emoTopLid, 1 - blinkOpen)
+        this.smLid += (targetLid - this.smLid) * OCCLUDER_SMOOTH_RATIO
+
+        if (this.smLid <= MIN_VISIBLE_LID_RATIO) {
+          shape.visible = false
+          return
+        }
+
+        const angleDeg = globalThis.breathTopAngleDeg ?? 0
+        const lidH = quantize(Math.min(rect.h, this.smLid * rect.h), QUANTIZE_PX)
+        const tiltPx = quantize(Math.tan((angleDeg * Math.PI) / 180) * (rect.w / 2), QUANTIZE_PX)
+        const inner = Math.max(0, lidH - tiltPx / 2)
+        const outer = Math.min(rect.h, lidH + tiltPx / 2)
+        // 険しさ(v<0): 外側(鼻から遠い側)がより下がる。side ごとに外側が左右反転する。
+        const bottomLeft = side === 'left' ? outer : inner
+        const bottomRight = side === 'left' ? inner : outer
+
+        const w = rect.w
+        const changed = w !== this.lastW || bottomLeft !== this.lastBottomLeft || bottomRight !== this.lastBottomRight
+        if (changed) {
+          try {
+            const path = Outline.PolygonPath(0, 0, w, 0, w, bottomRight, 0, bottomLeft)
+            shape.fillOutline = Outline.fill(path)
+            shape.strokeOutline = undefined
+          } catch (error) {
+            trace(`[breath-face] top-lid(${side}) rebuild failed: ${error}\n`)
+            shape.visible = false
+            return
+          }
+          this.lastW = w
+          this.lastBottomLeft = bottomLeft
+          this.lastBottomRight = bottomRight
+        }
+
+        shape.visible = true
+        const left = quantize(rect.left, QUANTIZE_PX)
+        const top = quantize(rect.top, QUANTIZE_PX)
+        if (changed || left !== this.lastLeft || top !== this.lastTop) {
+          this.lastLeft = left
+          this.lastTop = top
+          shape.coordinates = { left, top, width: w, height: Math.max(1, Math.max(bottomLeft, bottomRight)) }
+        }
+      }
+    },
+  }
+})
+
+export const BotArcOccluder = Shape.template((opts) => {
+  const side = opts.side
+  const initialWidth = opts.width ?? 57
+  const initialHeight = opts.height ?? 68
+
+  return {
+    left: 0,
+    top: 0,
+    width: initialWidth,
+    height: initialHeight,
+    visible: false,
+    skin: new Skin({ fill: OCCLUDER_FILL }),
+    Behavior: class extends Behavior {
+      smArc = 0
+      lastW = -1
+      lastH = -1
+      lastLeft = Number.NaN
+      lastTop = Number.NaN
+
+      onCreate(shape) {
+        try {
+          const path = Outline.RoundRectPath(0, 0, 1, 1, 0)
+          shape.fillOutline = Outline.fill(path)
+          shape.strokeOutline = undefined
+        } catch (error) {
+          trace(`[breath-face] bot-arc(${side}) onCreate failed: ${error}\n`)
+        }
+      }
+
+      onFaceContext(shape, face) {
+        try {
+          this.update(shape, face)
+        } catch (error) {
+          trace(`[breath-face] bot-arc(${side}) onFaceContext failed: ${error}\n`)
+        }
+      }
+
+      update(shape, _face) {
+        const rect = side === 'left' ? globalThis.breathEyeRectL : globalThis.breathEyeRectR
+        if (!rect || rect.w <= 0) {
+          shape.visible = false
+          return
+        }
+
+        const emoArc = globalThis.breathBotArc ?? 0
+        this.smArc += (emoArc - this.smArc) * OCCLUDER_SMOOTH_RATIO
+
+        if (this.smArc <= MIN_VISIBLE_LID_RATIO) {
+          shape.visible = false
+          return
+        }
+
+        const h = Math.max(1, quantize(Math.min(rect.h, this.smArc * rect.h), QUANTIZE_PX))
+        const w = Math.max(1, quantize(rect.w * 0.9, QUANTIZE_PX))
+        // RoundRectPath の radius は min(w,h)/2 を超えると壊れた形状になり得るため厳守する。
+        // h は常に w より十分小さい(botArc 最大 0.35*eyeHeight < eyeWidth*0.9)ため
+        // 実質 h/2 が採用される — 角を丸め切ることで上辺が凸に見える(スマイル弧)。
+        const radius = Math.max(1, Math.min(h, w) / 2)
+
+        const changed = w !== this.lastW || h !== this.lastH
+        if (changed) {
+          try {
+            const path = Outline.RoundRectPath(0, 0, w, h, radius)
+            shape.fillOutline = Outline.fill(path)
+            shape.strokeOutline = undefined
+          } catch (error) {
+            trace(`[breath-face] bot-arc(${side}) rebuild failed: ${error}\n`)
+            shape.visible = false
+            return
+          }
+          this.lastW = w
+          this.lastH = h
+        }
+
+        shape.visible = true
+        const left = quantize(rect.left + (rect.w - w) / 2, QUANTIZE_PX)
+        const top = quantize(rect.top + rect.h - h, QUANTIZE_PX)
+        if (changed || left !== this.lastLeft || top !== this.lastTop) {
+          this.lastLeft = left
+          this.lastTop = top
+          shape.coordinates = { left, top, width: w, height: h }
+        }
       }
     },
   }

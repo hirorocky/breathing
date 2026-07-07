@@ -4,6 +4,7 @@ import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } 
 import { onMicEvent } from 'breath/mic'
 import { playCry } from 'breath/cry'
 import { deferGaze } from 'breath/liveliness'
+import { getEmotion } from 'breath/emotion'
 
 /**
  * v1.1.0 Phase 3c #1 — 総合表現「startle + 方向つき一瞥」
@@ -85,6 +86,21 @@ function randomInRange(range) {
   return min + Math.random() * Math.max(0, max - min)
 }
 
+/**
+ * v1.2.0 (E1) — 感情エンジンの gainFactor/recoveryFactor を読む薄いヘルパー。
+ * emotion 不在/失敗時は無変調(1)にフォールバックする。萎縮中(v が大きく下がった
+ * 状態)は gainFactor が自然に下がるため、cry 確率・glance 振幅は特別分岐なしで
+ * 自然に小さくなる(getEmotion() の式そのものが萎縮を表現している)。
+ */
+function emotionModifiers() {
+  try {
+    return getEmotion()?.modifiers ?? {}
+  } catch (error) {
+    trace(`[react] emotion query failed: ${error}\n`)
+    return {}
+  }
+}
+
 function clearReactionTimers() {
   if (glanceTimerId != null) {
     Timer.clear(glanceTimerId)
@@ -127,10 +143,10 @@ function returnToCenter() {
   trace('[react] return to center\n')
 }
 
-function performGlance(dir, willCry, holdMs) {
+function performGlance(dir, willCry, holdMs, ampScale) {
   try {
     if (robotRef) {
-      const y = dir === 0 ? (Math.random() * 2 - 1) * CENTER_JITTER_Y : dir * params.glance.sideY
+      const y = dir === 0 ? (Math.random() * 2 - 1) * CENTER_JITTER_Y * ampScale : dir * params.glance.sideY * ampScale
       robotRef.lookAt([GAZE_FORWARD_M, y, 0])
     }
   } catch (error) {
@@ -157,9 +173,14 @@ function performGlance(dir, willCry, holdMs) {
  * (自動発火は不応期チェックも済み)。`lagX100` は trace 用(手動トリガでは null)。
  */
 function runReaction(dir, lagX100, now) {
+  const mod = emotionModifiers()
+  const gainFactor = typeof mod.gainFactor === 'number' ? mod.gainFactor : 1
+  const recoveryFactor = typeof mod.recoveryFactor === 'number' ? mod.recoveryFactor : 1
+  const ampScale = Math.min(1, Math.max(0.5, gainFactor)) // glance の sideY はここでのみ 0.5〜1 に絞る
+
   const delayMs = Math.round(randomInRange(params.glance.delayMs))
-  const holdMs = Math.round(randomInRange(params.glance.holdMs))
-  const willCry = Math.random() < params.startle.cryProb
+  const holdMs = Math.round(randomInRange(params.glance.holdMs) * recoveryFactor) // v<0 で回復が遅い(シナリオ7)
+  const willCry = Math.random() < params.startle.cryProb * gainFactor
 
   reactionInProgress = true
   lastReactionTicks = now
@@ -173,10 +194,10 @@ function runReaction(dir, lagX100, now) {
   clearReactionTimers()
   glanceTimerId = Timer.set(() => {
     glanceTimerId = null
-    performGlance(dir, willCry, holdMs)
+    performGlance(dir, willCry, holdMs, ampScale)
   }, delayMs)
 
-  trace(`[react] startle dir=${formatDir(dir)} lagX100=${lagX100 ?? 'none'} delay=${delayMs} hold=${holdMs} cry=${willCry ? 'yes' : 'no'}\n`)
+  trace(`[react] startle dir=${formatDir(dir)} lagX100=${lagX100 ?? 'none'} delay=${delayMs} hold=${holdMs} cry=${willCry ? 'yes' : 'no'} gain=${gainFactor.toFixed(2)} recovery=${recoveryFactor.toFixed(2)}\n`)
 }
 
 function handleMicEvent(event) {
