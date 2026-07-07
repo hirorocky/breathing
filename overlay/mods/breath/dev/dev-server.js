@@ -26,7 +26,7 @@ import {
   forceNightMode,
   startValenceDrift,
 } from 'breath/emotion'
-import { getLedStatus, setLedParams, testLed } from 'breath/led'
+import { getLedStatus, setLedParams, testLed, setLedSingle, startLedSweep } from 'breath/led'
 import { getPostureStatus, setPostureParams, testPosture } from 'breath/posture'
 
 /**
@@ -1532,6 +1532,157 @@ const ledTestRoute = {
 }
 
 /**
+ * POST /led/set(要 x-dev-token)。body `{"index":0..11,"r":..,"g":..,"b":..,"ms":2000}`
+ * で単一 LED を生の物理 index で点灯(v1.2.1 E2.1 — 物理配置の目視特定用。
+ * ledTestRoute と同型)。
+ */
+const ledSetRoute = {
+  onRequest(request) {
+    this.sent = 0
+    this.chunks = []
+
+    if ('POST' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    if (!isAuthorized(request)) {
+      this.status = 401
+      this.data = ArrayBuffer.fromString('')
+      trace('[dev] led set rejected: bad or missing x-dev-token\n')
+      return
+    }
+    this.status = 200 // 本文を読み終えてから onResponse で確定する
+  },
+  onReadable(count) {
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] led set read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if (200 === this.status && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if (200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const ok = setLedSingle(body?.index, body?.r, body?.g, body?.b, body?.ms)
+        this.status = ok ? 200 : 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok }))
+      } catch (error) {
+        trace(`[dev] led set failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] led set connection error: ${message}\n`)
+  },
+}
+
+/**
+ * POST /led/sweep(要 x-dev-token)。body `{"ms":800}`(省略可 — 空ボディは既定値)。
+ * index 0→11 を順に 1 個ずつ白点灯するデモ(v1.2.1 E2.1 — 物理配置の目視特定用)。
+ * レスポンスは `{ok, totalMs}`。
+ */
+const ledSweepRoute = {
+  onRequest(request) {
+    this.sent = 0
+    this.chunks = []
+
+    if ('POST' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    if (!isAuthorized(request)) {
+      this.status = 401
+      this.data = ArrayBuffer.fromString('')
+      trace('[dev] led sweep rejected: bad or missing x-dev-token\n')
+      return
+    }
+    this.status = 200 // 本文を読み終えてから onResponse で確定する
+  },
+  onReadable(count) {
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] led sweep read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if (200 === this.status && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if (200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = total > 0 ? JSON.parse(String.fromArrayBuffer(merged.buffer)) : {}
+        const totalMs = startLedSweep(body?.ms)
+        const ok = totalMs > 0
+        this.status = ok ? 200 : 503
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok, totalMs }))
+      } catch (error) {
+        trace(`[dev] led sweep failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] led sweep connection error: ${message}\n`)
+  },
+}
+
+/**
  * GET /posture(v1.3.0 E3 — サーボ解禁 + 感情姿勢)。現在パラメータ + 状態
  * (currentPitchDeg・moveInProgress・hasPoseApi・lastMoveAgoS)。reactRoute と同型。
  */
@@ -1745,6 +1896,8 @@ const router = new Map([
   ['/led', ledRoute],
   ['/led/params', ledParamsRoute],
   ['/led/test', ledTestRoute],
+  ['/led/set', ledSetRoute],
+  ['/led/sweep', ledSweepRoute],
   ['/posture', postureRoute],
   ['/posture/params', postureParamsRoute],
   ['/posture/test', postureTestRoute],
