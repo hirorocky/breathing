@@ -112,6 +112,9 @@ export const CozmoEye = Shape.template((opts) => {
         const gazeScale = globalThis.breathGazeScale ?? 2
         const gazeX = eye ? (eye.gazeX ?? 0) * gazeScale : 0
         const gazeY = eye ? (eye.gazeY ?? 0) * gazeScale : 0
+        // デバッグ計器(GET /status の dbgGaze から読む。一瞥の符号バグ調査 2026-07-07)
+        if (side === 'left') globalThis.breathDbgGazeL = gazeX
+        else globalThis.breathDbgGazeR = gazeX
 
         const left = quantize(cx - w / 2 + gazeX + driftX, QUANTIZE_PX)
         const top = quantize(cy - h / 2 + gazeY + driftY, QUANTIZE_PX)

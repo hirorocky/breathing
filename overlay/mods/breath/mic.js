@@ -53,6 +53,19 @@ import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } 
  * を計算する(通常時の追加 CPU はゼロ)。ループ内アロケーションなし・
  * 例外は握って trace のみ(失敗しても loud/clap イベント自体は通常どおり
  * 発火する)。
+ *
+ * v1.2.0 — サンプルレート非依存化(48kHz 実験)。右マイク(ch1)の音響結合が
+ * 弱く TDOA のラグが量子化の床(16kHz で最大 ±1.7 サンプル)に沈む問題への
+ * 対策として、実行時サンプルレートを 16kHz 前提から解放した。`ensureRateFactor`
+ * が最初のチャンクで `AudioIn.sampleRate`(無ければ 16000 にフォールバック)から
+ * `rateFactor = sampleRate/16000` を求め、オンセット窓(`dirOnsetBefore`/
+ * `dirOnsetAfter`)とピーク走査ストライド(`peakStride`/`peakChannelStride`)を
+ * 「時間一定」になるよう再スケールする。**報告する `lag`/`lagX100` は常に
+ * 16kHz 換算**(既存のライブ調整値・校正記録・trace の読み方を不変に保つ)。
+ * 高レートでの計算量爆発(窓・ラグとも rateFactor 倍 → 総当たりは rateFactor^2 倍)
+ * を避けるため、相互相関は粗密 2 段探索にしている(`computeDirectionEstimate`
+ * 内: 粗 = stride 間引きで従来と同計算量、密 = 粗のベストラグ ±stride のみ
+ * 全解像度)。`rateFactor === 1`(16kHz)のときは実質従来の単段探索と同じ。
  */
 
 const PREF_KEY = 'mic'
@@ -60,16 +73,20 @@ const PREF_KEY = 'mic'
 const WINDOW_MS = 100 // 窓の長さ(固定。tunable パラメータではない)
 const RING_CAPACITY = 60 // ~6 秒分(既定 100ms 窓 × 60)
 const EVENT_RING_CAPACITY = 10 // 直近のイベント(loud/clap/voice/silence)を保持する件数
-const PEAK_STRIDE = 4 // ピーク走査の間引き(基準。合計比較数の目安 N/PEAK_STRIDE)
-const PEAK_CHANNEL_STRIDE = PEAK_STRIDE * 2 // 開始 index 0・1 の 2 本をこの stride で走査(合計比較数を PEAK_STRIDE 単一走査と同じに保つ)
-const LEVEL_FALLBACK_STRIDE = 4 // ネイティブ level() が無い場合の JS 平均絶対値も同様に間引く
+const PEAK_STRIDE = 4 // ピーク走査の間引き(16kHz 基準。合計比較数の目安 N/PEAK_STRIDE。実行時は rateFactor でスケールした peakStride を使う)
+const PEAK_CHANNEL_STRIDE = PEAK_STRIDE * 2 // 開始 index 0・1 の 2 本をこの stride で走査(合計比較数を PEAK_STRIDE 単一走査と同じに保つ。16kHz 基準値)
+const LEVEL_FALLBACK_STRIDE = 4 // ネイティブ level() が無い場合の JS 平均絶対値も同様に間引く(レート非依存 — フォールバック経路のみ)
 const PROC_US_EMA_ALPHA = 0.2 // avgProcUs の指数移動平均の重み
 
+const NOMINAL_SAMPLE_RATE = 16000 // 全ての報告値・調整値の正規化基準(v1.2.0)。実行時レートが何であれこれに揃える。
+
 // v1.1.0 Phase 3b+ — 方向推定(TDOA + ILD)のウィンドウ。**オンセット(立ち上がり)
-// 基準**で直接音の周辺だけを取る(前 16・後 48 の計 64 ペア = 4ms)。拍手の直接音は
-// 最初の 1〜2ms のみで、ピーク基準の広い窓(旧 256 ペア = 16ms)は部屋の反射音が
-// 支配して相関ピークが方向と無関係にずれる(2026-07-07 左右拍手セッションで
-// 左右が分離しなかった実測を受けた改良)。
+// 基準**で直接音の周辺だけを取る(16kHz で前 16・後 48 の計 64 ペア = 4ms)。拍手の
+// 直接音は最初の 1〜2ms のみで、ピーク基準の広い窓(旧 256 ペア = 16ms)は部屋の
+// 反射音が支配して相関ピークが方向と無関係にずれる(2026-07-07 左右拍手セッションで
+// 左右が分離しなかった実測を受けた改良)。この 2 値は 16kHz 基準の「時間一定」値
+// (v1.2.0)— 実行時は `ensureRateFactor` が `dirOnsetBefore`/`dirOnsetAfter` へ
+// rateFactor 倍してキャッシュする。
 const DIR_ONSET_BEFORE = 16
 const DIR_ONSET_AFTER = 48
 const DIR_ESTIMATE_MAX_AGE_MS = 1000 // イベントに添付してよい推定の鮮度(この窓を超えたら添付しない)
@@ -96,12 +113,15 @@ const defaults = {
   // v1.1.0 Phase 3b — イベント検出パラメータ(実測済みの指紋を既定値の根拠にする。
   // 2026-07-07 校正: 静音フロア rms 中央値 24・最大 99、拍手 peak 6,100〜20,300 /
   // peak/rms 比 13〜17、声 rms 100〜165 / peak/rms 比 2〜3.4)。
-  loud: { peakMin: 3000, refractoryMs: 1500 },
+  loud: { peakMin: 1500, refractoryMs: 1500 }, // peakMin は 2026-07-07 実測で 3000 → 1500(1m の普通の拍手は 1200〜6500。声・フロアの peak は ~550 以下で余裕あり)
   clap: { ratioMin: 8 },
   voice: { rmsMin: 110, minWindows: 3, gapWindows: 1, hangoverMs: 30000 },
   silence: { rmsMax: 60, minutes: 5 },
   // v1.1.0 Phase 3b+ — 方向推定(TDOA + ILD)。maxLag はマイク間隔 ~4cm →
   // 到達時間差最大 ±117µs ≈ 16kHz で ±2 サンプル弱に余裕を持たせた値。
+  // v1.2.0 で maxLag の単位を「16kHz 換算サンプル」に再定義(実行時レートが
+  // 何であれ既定 4 のまま使える)。実際の探索は effectiveMaxLag =
+  // round(maxLag * rateFactor) にスケールする(48kHz では ±12)。
   direction: { enabled: true, maxLag: 4 },
 }
 
@@ -178,6 +198,16 @@ let lastDirEstimate = null // { t, lag, corrPeakRatio, l0, l1 }
 let lastDirEstimateTicks = -Infinity
 let lastDirComputeTicks = -Infinity // loud.refractoryMs と同様のゲート(毎チャンク計算しない)
 
+// v1.2.0 — サンプルレート非依存化の状態。最初のチャンクで一度だけ確定する
+// (以後 no-op)。rateFactor===1(16kHz)の間は全て 16kHz 基準の既定値のまま
+// なので、48kHz を試さない機体・パーティションでは挙動が一切変わらない。
+let rateFactor = 1 // sampleRate / NOMINAL_SAMPLE_RATE。startMic 直後は 16kHz 前提の 1。
+let rateFactorReady = false
+let dirOnsetBefore = DIR_ONSET_BEFORE // 実レート換算(時間一定)。ensureRateFactor で更新。
+let dirOnsetAfter = DIR_ONSET_AFTER
+let peakStride = PEAK_STRIDE // 実レート換算(走査点数一定)。ensureRateFactor で更新。
+let peakChannelStride = PEAK_CHANNEL_STRIDE
+
 // ---------------------------------------------------------------------------
 // ヘルパー
 // ---------------------------------------------------------------------------
@@ -196,6 +226,34 @@ function pushRing(entry) {
   if (ring.length > RING_CAPACITY) ring.shift()
 }
 
+/**
+ * 実行時の `AudioIn.sampleRate` を読んで rateFactor(= sampleRate/16000)を
+ * キャッシュし、時間基準のオンセット窓(dirOnsetBefore/After)と CPU 対策の
+ * ピーク走査ストライド(peakStride/peakChannelStride)を再スケールする。
+ * accumulateChunk の先頭から呼ぶ(最初のチャンクで一度だけ実行、以後は
+ * no-op)。`sampleRate` プロパティが無い実装では 16000 とみなし
+ * rateFactor=1 にフォールバックする(trace で警告)。
+ */
+function ensureRateFactor(audioIn) {
+  if (rateFactorReady) return
+  rateFactorReady = true
+
+  const hasSampleRate = typeof audioIn.sampleRate === 'number' && audioIn.sampleRate > 0
+  const sampleRate = hasSampleRate ? audioIn.sampleRate : NOMINAL_SAMPLE_RATE
+  rateFactor = sampleRate / NOMINAL_SAMPLE_RATE
+  if (!hasSampleRate) {
+    trace(`[mic] AudioIn.sampleRate unavailable; assuming ${NOMINAL_SAMPLE_RATE}Hz (rateFactor=1)\n`)
+  }
+
+  dirOnsetBefore = Math.max(1, Math.round(DIR_ONSET_BEFORE * rateFactor))
+  dirOnsetAfter = Math.max(1, Math.round(DIR_ONSET_AFTER * rateFactor))
+  peakStride = Math.max(1, Math.round(PEAK_STRIDE * rateFactor))
+  peakChannelStride = peakStride * 2
+
+  const channels = typeof audioIn.channels === 'number' ? audioIn.channels : 1
+  trace(`[mic] capture started (${sampleRate}Hz x ${channels}ch)\n`)
+}
+
 function computeLevelFallback(samples, sampleCount) {
   let sum = 0
   let counted = 0
@@ -209,21 +267,24 @@ function computeLevelFallback(samples, sampleCount) {
 
 /**
  * ステレオ(L/R インターリーブ)前提の間引き走査。開始 index 0(偶数 = ch0)と
- * 1(奇数 = ch1)の 2 本を PEAK_CHANNEL_STRIDE(= PEAK_STRIDE の 2 倍)で
- * 走査する — 合計比較数は以前の単一走査(開始 0・stride PEAK_STRIDE)と同じ
- * (N/PEAK_STRIDE)のまま、両チャンネルを同程度カバーする(以前は開始 0 の
+ * 1(奇数 = ch1)の 2 本を peakChannelStride(= peakStride の 2 倍、常に偶数)で
+ * 走査する — 合計比較数は単一走査(開始 0・stride peakStride)と同じ
+ * (N/peakStride)のまま、両チャンネルを同程度カバーする(以前は開始 0 の
  * みだったため実質 ch0 しか見ていなかった。単純に両方を stride
- * PEAK_STRIDE で回すとコストが 2 倍になるため、真のステレオ化で実データ量
+ * peakStride で回すとコストが 2 倍になるため、真のステレオ化で実データ量
  * 自体が 2 倍になったこととの相乗を避けるためにここは同一コストへ据え置く)。
+ * peakStride/peakChannelStride は 16kHz 基準値(PEAK_STRIDE)を rateFactor で
+ * スケールしたもの(v1.2.0、`ensureRateFactor` 参照) — 高レートでも走査点数
+ * (=CPU コスト)を一定に保つ。
  */
 function computePeak(samples, sampleCount) {
   let peak = 0
-  for (let i = 0; i < sampleCount; i += PEAK_CHANNEL_STRIDE) {
+  for (let i = 0; i < sampleCount; i += peakChannelStride) {
     const v = samples[i]
     const abs = v < 0 ? -v : v
     if (abs > peak) peak = abs
   }
-  for (let i = 1; i < sampleCount; i += PEAK_CHANNEL_STRIDE) {
+  for (let i = 1; i < sampleCount; i += peakChannelStride) {
     const v = samples[i]
     const abs = v < 0 ? -v : v
     if (abs > peak) peak = abs
@@ -266,40 +327,78 @@ function findOnsetFrameIndex(samples, frameCount) {
 }
 
 /**
- * オンセット周辺の短いウィンドウ(前 DIR_ONSET_BEFORE・後 DIR_ONSET_AFTER、
- * チャンク境界でクランプ)で相互相関(ラグ -maxLag..+maxLag)とチャンネル別
+ * オンセット周辺の短いウィンドウ(前 dirOnsetBefore・後 dirOnsetAfter、
+ * チャンク境界でクランプ。実レート換算の「時間一定」値 — ensureRateFactor
+ * 参照)で相互相関(ラグ -effectiveMaxLag..+effectiveMaxLag)とチャンネル別
  * レベルを求める。アロケーションなしを保つため、ラグ別 corr は補間に必要な
  * 「best とその両隣」だけをスカラーで保持する(配列を作らない)。
- * 相関ピークは放物線補間でサブサンプル化し、`lagX100`(ラグ × 100 の整数)も
- * 返す — マイク間隔 ~3.5cm は 16kHz で最大 ±1.6 サンプルしかなく、整数ラグ
- * だけでは量子化が粗すぎるため。診断用に corr の並びを trace する。
+ *
+ * v1.2.0 — 粗密 2 段探索。rateFactor(既定 1 = 16kHz)が 1 を超えると窓・ラグ
+ * とも rateFactor 倍に膨らみ、素朴な全解像度総当たりは計算量が rateFactor^2
+ * 倍になる(48kHz で ~8 倍)。まず stride(= round(rateFactor))間引きの粗探索
+ * (サンプル・ラグとも stride 刻み = 16kHz 単段探索と同計算量)でおおよその
+ * ラグを求め、その周辺 ±stride だけ全解像度・全サンプルで密探索する
+ * (トータルで従来比 2〜3 倍程度)。`rateFactor === 1` のときは stride===1 に
+ * なり、密探索の範囲が全域を覆うため実質従来の単段アルゴリズムと同じ
+ * (16kHz での出力は変化しない)。
+ *
+ * 密探索側の相関ピークは放物線補間でサブサンプル化する。**報告する
+ * `lag`/`lagX100` は常に 16kHz 換算**(lagInterp を rateFactor で割る)——
+ * 既存のライブ調整値(reactions の lagSideMin 等)・校正記録・trace の読み方を
+ * 実行時レートに関わらず不変に保つため。診断用に corr の並びを trace する。
  * ウィンドウが小さすぎる(チャンク境界付近)場合は null を返す。
  */
 function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
-  const maxLag = params.direction.maxLag
+  const maxLag = params.direction.maxLag // 16kHz 換算(v1.2.0 で再定義)
+  const effectiveMaxLag = Math.max(1, Math.round(maxLag * rateFactor)) // 実レート換算の探索範囲
 
-  let winStart = onsetFrameIdx - DIR_ONSET_BEFORE
+  let winStart = onsetFrameIdx - dirOnsetBefore
   if (winStart < 0) winStart = 0
-  let winEnd = onsetFrameIdx + DIR_ONSET_AFTER
+  let winEnd = onsetFrameIdx + dirOnsetAfter
   if (winEnd > frameCount) winEnd = frameCount
-  if (winEnd - winStart <= maxLag * 2) return null
+  if (winEnd - winStart <= effectiveMaxLag * 2) return null
 
-  let bestLag = 0
+  const stride = Math.max(1, Math.round(rateFactor))
+
+  // --- 粗探索(サンプル・ラグとも stride 間引き。16kHz 単段探索と同計算量) ---
+  let coarseBestLag = 0
+  let coarseBestCorr = -Infinity
+  let zeroLagCorr = 0 // 粗探索が lag=0 を通れば暫定値。密探索で通ればより精密な値に上書きする。
+  for (let lag = -effectiveMaxLag; lag <= effectiveMaxLag; lag += stride) {
+    let corr = 0
+    for (let n = winStart; n < winEnd; n += stride) {
+      const m = n + lag
+      if (m < 0 || m >= frameCount) continue
+      corr += samples[n << 1] * samples[(m << 1) + 1]
+    }
+    if (0 === lag) zeroLagCorr = corr
+    if (corr > coarseBestCorr) {
+      coarseBestCorr = corr
+      coarseBestLag = lag
+    }
+  }
+
+  // --- 密探索(粗のベストラグ ±stride だけ全解像度・全サンプル) ---
+  let fineLo = coarseBestLag - stride
+  if (fineLo < -effectiveMaxLag) fineLo = -effectiveMaxLag
+  let fineHi = coarseBestLag + stride
+  if (fineHi > effectiveMaxLag) fineHi = effectiveMaxLag
+
+  let bestLag = fineLo
   let bestCorr = -Infinity
   let prevCorr = 0 // 直前ラグの corr(補間用)
   let corrBeforeBest = 0
   let corrAfterBest = 0
   let bestWasPrev = false // 直後のループ回で「best の次の corr」を拾うためのフラグ
-  let zeroLagCorr = 0
   let corrTrace = ''
-  for (let lag = -maxLag; lag <= maxLag; lag++) {
+  for (let lag = fineLo; lag <= fineHi; lag++) {
     let corr = 0
     for (let n = winStart; n < winEnd; n++) {
       const m = n + lag
       if (m < 0 || m >= frameCount) continue
       corr += samples[n << 1] * samples[(m << 1) + 1]
     }
-    if (0 === lag) zeroLagCorr = corr
+    if (0 === lag) zeroLagCorr = corr // 密探索の方が精密なので優先して上書き
     if (bestWasPrev) {
       corrAfterBest = corr
       bestWasPrev = false
@@ -312,20 +411,24 @@ function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
       bestWasPrev = true
     }
     prevCorr = corr
-    corrTrace += `${lag === -maxLag ? '' : ','}${Math.round(corr / 1000)}`
+    corrTrace += `${lag === fineLo ? '' : ','}${Math.round(corr / 1000)}`
   }
 
-  // 放物線補間(best が探索端のときは補間しない)。frac は [-0.5, 0.5] にクランプ。
-  let lagX100 = bestLag * 100
-  if (bestLag > -maxLag && bestLag < maxLag) {
+  // 放物線補間(best が密探索レンジの端のときは補間しない)。frac は [-0.5, 0.5] にクランプ。
+  let lagInterp = bestLag
+  if (bestLag > fineLo && bestLag < fineHi) {
     const denom = corrBeforeBest - 2 * bestCorr + corrAfterBest
     if (denom < 0) {
       let frac = (0.5 * (corrBeforeBest - corrAfterBest)) / denom
       if (frac > 0.5) frac = 0.5
       else if (frac < -0.5) frac = -0.5
-      lagX100 = Math.round((bestLag + frac) * 100)
+      lagInterp = bestLag + frac
     }
   }
+
+  // 16kHz 換算に正規化(実行時レートが何であれ既存の調整値・校正記録がそのまま使える)。
+  const lag = Math.round(lagInterp / rateFactor)
+  const lagX100 = Math.round((lagInterp / rateFactor) * 100)
 
   let sumAbs0 = 0
   let sumAbs1 = 0
@@ -342,8 +445,8 @@ function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
   const l1 = windowCount > 0 ? Math.round(sumAbs1 / windowCount) : 0
   const corrPeakRatio = zeroLagCorr > 0 ? Math.round((bestCorr / zeroLagCorr) * 100) / 100 : 0
 
-  trace(`[mic] dir corr(k)=[${corrTrace}] win=${winStart}..${winEnd}\n`)
-  return { t: now, lag: bestLag, lagX100, corrPeakRatio, l0, l1 }
+  trace(`[mic] dir corr(k)=[${corrTrace}] win=${winStart}..${winEnd} fine=${fineLo}..${fineHi} coarseLag=${coarseBestLag} stride=${stride}\n`)
+  return { t: now, lag, lagX100, corrPeakRatio, l0, l1 }
 }
 
 /**
@@ -385,6 +488,8 @@ function maybeEstimateDirection(audioIn, samples, sampleCount, peakValue) {
 }
 
 function accumulateChunk(audioIn, buffer) {
+  ensureRateFactor(audioIn)
+
   const sampleCount = buffer.byteLength >> 1
   if (sampleCount <= 0) return
 
@@ -775,6 +880,13 @@ export function getMicStatus() {
     rms: lastWindow.rms,
     peak: lastWindow.peak,
     avgProcUs: avgProcUsEma == null ? 0 : Math.round(avgProcUsEma),
+    // v1.2.0 — 実行時レート診断(sampleRate 非依存化)。rateFactorReady が false のうちは
+    // まだ最初のチャンクを処理していない(16kHz 前提の既定値のまま)。
+    rate: {
+      rateFactorReady,
+      rateFactor,
+      sampleRateHz: Math.round(rateFactor * NOMINAL_SAMPLE_RATE),
+    },
     ring: summarizeRing(),
     lastDir: lastDirEstimate ? { ...lastDirEstimate } : null,
     events: eventRing.slice(),

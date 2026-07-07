@@ -64,6 +64,8 @@ function buildStatusPayload() {
     ip: safeIp(),
     battery: safeBattery(),
     uptimeMs: Time.ticks,
+    // デバッグ計器(eye-cozmo が毎フレーム書く描画オフセット px。一瞥の符号バグ調査 2026-07-07)
+    dbgGaze: { l: globalThis.breathDbgGazeL ?? null, r: globalThis.breathDbgGazeR ?? null },
   }
 }
 
