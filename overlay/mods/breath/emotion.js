@@ -197,13 +197,12 @@ function applyFaceBridge(now) {
   currentTopLidValue = topLid
 
   const topAngleDeg = v < 0 ? Math.abs(v) * 12 : 0
-  const botArc = Math.max(0, v) * 0.35
+  // botArc(笑いの下弧)は 2026-07-08 廃止 — 喜びは LED・声色で表現(ユーザー確定)
   const eyeScale = 1 + 0.06 * a
   const eyeLift = a * 4
 
   globalThis.breathTopLid = topLid
   globalThis.breathTopAngleDeg = topAngleDeg
-  globalThis.breathBotArc = botArc
   globalThis.breathEyeScale = eyeScale
   globalThis.breathEyeLift = eyeLift
   globalThis.breathSleepy = sleepy

@@ -37,7 +37,7 @@
 
 ## 3. 内部状態 4 語彙 × StackChan アセットのマップ
 
-アセット: 目（脈動・まばたき・視線・変形プリセット topLid/topAngle/botArc/scale/asym）/ 呼吸サイクル / cry（murmur・startle・touch、毎回ゆらぎ）/ マイクイベント（loud・clap・voice・silence — 3b）/ タッチ / LED 12 連（未使用）/ サーボ ×2（現在 OFF）。
+アセット: 目（脈動・まばたき・視線・変形プリセット topLid/topAngle/scale/asym — botArc は 2026-07-08 廃止、喜びは LED・声色で表現）/ 呼吸サイクル / cry（murmur・startle・touch、毎回ゆらぎ）/ マイクイベント（loud・clap・voice・silence — 3b）/ タッチ / LED 12 連（未使用）/ サーボ ×2（現在 OFF）。
 
 ### Attention（注意）— 「一瞥」
 
@@ -55,7 +55,7 @@
 ### Attitude（態度）— 「反射と受容」
 
 - **startle**（loud/clap → 反射。「間」の唯一の例外）: 即時にまばたき + 目が縮む + 呼吸一拍停止 → **回復はゆっくり 2〜4 秒**（follow-through。立ち上がり速く・戻り遅くが生き物の減衰）。鳴くのは確率 10〜20%（毎回鳴くと安っぽい）。不応期は長く（連発しない）
-- **touch**（頭頂）: 下弧が上がる柔らかい目（botArc、Cozmo の smile-eyes）1〜2 秒 + まれに touch cry。返事ではなく受容
+- **touch**（頭頂）: LED の暖色パルス + まれに touch cry。返事ではなく受容（~~botArc の smile-eyes~~ は 2026-07-08 廃止 — 喜びは目の形で表現しない）
 - hesitation（ためらい）は当面使いどころがない — 保留
 
 ### Emotion（情動）— 「場のムード」（長時間尺度）

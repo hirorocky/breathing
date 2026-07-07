@@ -41,11 +41,11 @@ function quantize(value, step) {
 }
 
 // v1.2.0 (E1) — emotion.js が毎 tick(1Hz)書く感情由来の目のパラメータ
-// (globalThis.breathTopLid/breathTopAngleDeg/breathBotArc/breathEyeScale/breathEyeLift)。
+// (globalThis.breathTopLid/breathTopAngleDeg/breathEyeScale/breathEyeLift)。
 // occluder 側は同じ側の値をそのまま読む。ここでは eye 自身の eyeScale/eyeLift だけを
 // このモジュール内(update())で消費する。
 // eye-cozmo.js が毎フレーム書く「今フレームの最終的な目の矩形」(左右別)。occluder
-// (このファイル下部の TopLidOccluder/BotArcOccluder)がここを読んで自分の位置・幅を
+// (このファイル下部の TopLidOccluder)がここを読んで自分の位置・幅を
 // 合わせる。フレームごとの再アロケーションを避けるため、オブジェクト自体はモジュール
 // ロード時に一度だけ作り、以後はフィールドをその場で書き換える。
 if (!globalThis.breathEyeRectL) globalThis.breathEyeRectL = { left: 0, top: 0, w: 0, h: 0 }
@@ -276,89 +276,5 @@ export const TopLidOccluder = Shape.template((opts) => {
   }
 })
 
-export const BotArcOccluder = Shape.template((opts) => {
-  const side = opts.side
-  const initialWidth = opts.width ?? 57
-  const initialHeight = opts.height ?? 68
-
-  return {
-    left: 0,
-    top: 0,
-    width: initialWidth,
-    height: initialHeight,
-    visible: false,
-    skin: new Skin({ fill: OCCLUDER_FILL }),
-    Behavior: class extends Behavior {
-      smArc = 0
-      lastW = -1
-      lastH = -1
-      lastLeft = Number.NaN
-      lastTop = Number.NaN
-
-      onCreate(shape) {
-        try {
-          const path = Outline.RoundRectPath(0, 0, 1, 1, 0)
-          shape.fillOutline = Outline.fill(path)
-          shape.strokeOutline = undefined
-        } catch (error) {
-          trace(`[breath-face] bot-arc(${side}) onCreate failed: ${error}\n`)
-        }
-      }
-
-      onFaceContext(shape, face) {
-        try {
-          this.update(shape, face)
-        } catch (error) {
-          trace(`[breath-face] bot-arc(${side}) onFaceContext failed: ${error}\n`)
-        }
-      }
-
-      update(shape, _face) {
-        const rect = side === 'left' ? globalThis.breathEyeRectL : globalThis.breathEyeRectR
-        if (!rect || rect.w <= 0) {
-          shape.visible = false
-          return
-        }
-
-        const emoArc = globalThis.breathBotArc ?? 0
-        this.smArc += (emoArc - this.smArc) * OCCLUDER_SMOOTH_RATIO
-
-        if (this.smArc <= MIN_VISIBLE_LID_RATIO) {
-          shape.visible = false
-          return
-        }
-
-        const h = Math.max(1, quantize(Math.min(rect.h, this.smArc * rect.h), QUANTIZE_PX))
-        const w = Math.max(1, quantize(rect.w * 0.9, QUANTIZE_PX))
-        // RoundRectPath の radius は min(w,h)/2 を超えると壊れた形状になり得るため厳守する。
-        // h は常に w より十分小さい(botArc 最大 0.35*eyeHeight < eyeWidth*0.9)ため
-        // 実質 h/2 が採用される — 角を丸め切ることで上辺が凸に見える(スマイル弧)。
-        const radius = Math.max(1, Math.min(h, w) / 2)
-
-        const changed = w !== this.lastW || h !== this.lastH
-        if (changed) {
-          try {
-            const path = Outline.RoundRectPath(0, 0, w, h, radius)
-            shape.fillOutline = Outline.fill(path)
-            shape.strokeOutline = undefined
-          } catch (error) {
-            trace(`[breath-face] bot-arc(${side}) rebuild failed: ${error}\n`)
-            shape.visible = false
-            return
-          }
-          this.lastW = w
-          this.lastH = h
-        }
-
-        shape.visible = true
-        const left = quantize(rect.left + (rect.w - w) / 2, QUANTIZE_PX)
-        const top = quantize(rect.top + rect.h - h, QUANTIZE_PX)
-        if (changed || left !== this.lastLeft || top !== this.lastTop) {
-          this.lastLeft = left
-          this.lastTop = top
-          shape.coordinates = { left, top, width: w, height: h }
-        }
-      }
-    },
-  }
-})
+// BotArcOccluder(笑いの下弧)は 2026-07-08 に廃止 — ユーザー FB「笑ったときの目に違和感。
+// 喜びは目ではなく LED・声色・動きで表現する」。喜び表現は led.js(暖色)・cry(音色)が担う。
