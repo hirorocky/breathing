@@ -51,3 +51,9 @@ git submodule update --remote stack-chan
 ## エージェント（Claude / Codex）
 
 ルートの [CLAUDE.md](CLAUDE.md) と [AGENTS.md](AGENTS.md)（→ `CLAUDE.md`）に、リポジトリ構成・ハードウェア・ビルド手順・エージェント向けルールをまとめている。
+
+## ライセンス
+
+Copyright 2026 hirorocky
+
+このリポジトリのリソースは [Apache License 2.0](LICENSE) で配布する（upstream の [stack-chan](https://github.com/stack-chan/stack-chan) と同一ライセンス。`stack-chan/` サブモジュールおよびその改変は upstream のライセンス・著作権表示に従う）。
