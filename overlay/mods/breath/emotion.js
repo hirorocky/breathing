@@ -122,6 +122,10 @@ const startleTimestamps = []
 const touchTimestamps = []
 
 let lastPollTicks = -Infinity
+let lastManualSetTicks = -Infinity // setEmotionState() が最後に呼ばれた ticks(bug #5 対策 — 下記参照)
+const MANUAL_SET_GUARD_MS = 5000 // 明示的な状態セット直後は ambient poll による上書きを一時抑制する
+
+const emotionEventListeners = [] // onEmotionEvent(cb) の購読者(v1.2.0 E2 — LED の touch 演出用に最小追加)
 
 // シナリオ用の一時オーバーライド(dev-server の POST /emotion/scenario から使う)。
 // 実測値を偽装せず「この期間だけ条件を強制する」形にして、通常時の判定ロジックは変えない。
@@ -277,6 +281,12 @@ function performTick() {
 
 function pollAmbientState(now) {
   try {
+    // bug #5 対策: 直前(MANUAL_SET_GUARD_MS 以内)に setEmotionState() で明示的に
+    // セットされた値を、この巡回チェックが immediately 上書きしないようにする
+    // (シナリオ実行直後に voiceActive 等の ambient nudge が乗ると「絶対値ハードセット」
+    // のはずの値が数百 ms 後にはブレンドされたように見えてしまっていた)。
+    if (now - lastManualSetTicks < MANUAL_SET_GUARD_MS) return
+
     const forcedVoice = now < manualVoiceActiveUntilTicks
     let voiceActive = forcedVoice
     let silent = false
@@ -334,6 +344,29 @@ function applyMicEventType(type, now) {
   return true
 }
 
+// ---------------------------------------------------------------------------
+// v1.2.0 (E2) — 最小の購読ポイント(led.js の touch 演出用)。physical touch の
+// 配線は依然なく、pushTouch() が呼ばれた(dev-server 経由・手動)瞬間に 'touch'
+// イベントを通知するだけ。mic.js の onMicEvent と同じ形(登録した callback が
+// 例外を投げても他の callback・emotion 本体の処理には波及しない)。
+// ---------------------------------------------------------------------------
+
+function notifyEmotionEventListeners(event) {
+  for (const callback of emotionEventListeners) {
+    try {
+      callback(event)
+    } catch (error) {
+      trace(`[emotion] event listener failed: ${error}\n`)
+    }
+  }
+}
+
+/** callback は `(event) => {}` 形式(現時点では `{ type: 'touch', t }` のみ発火)。 */
+export function onEmotionEvent(callback) {
+  if (typeof callback !== 'function') return
+  emotionEventListeners.push(callback)
+}
+
 function handleMicEvent(event) {
   try {
     if (!started || !params.enabled) return
@@ -383,10 +416,16 @@ export function getEmotion() {
   }
 }
 
-/** PUT /emotion/state。直接移動(クランプ [-1,1])。 */
+/**
+ * PUT /emotion/state。直接移動(クランプ [-1,1]、加算ではない絶対値ハードセット)。
+ * bug #5 対策: `lastManualSetTicks` を更新し、直後の ambient poll(pollAmbientState)
+ * がこのセットを上書きしないようガードする(setEmotionState 自体は元から加算では
+ * なかったが、直後の poll nudge がブレンドしたように見えていたため)。
+ */
 export function setEmotionState(v, a) {
   if (typeof v === 'number' && Number.isFinite(v)) state.v = clamp(v, -1, 1)
   if (typeof a === 'number' && Number.isFinite(a)) state.a = clamp(a, -1, 1)
+  lastManualSetTicks = Time.ticks
   trace(`[emotion] state set v=${state.v.toFixed(2)} a=${state.a.toFixed(2)}\n`)
   return getEmotion()
 }
@@ -402,7 +441,19 @@ export function pushEmotionEvent(name) {
   }
 }
 
-/** POST /emotion/touch(要 token、dev-server 側)。物理配線なしの touch 代替。 */
+/**
+ * POST /emotion/touch(要 token、dev-server 側)。物理配線なしの touch 代替。
+ *
+ * bug #12 対策: 従来は `touchTimestamps.length >= touchBurstCount` で一度だけ
+ * バーストペナルティを適用した後に `touchTimestamps.length = 0` で履歴をリセットして
+ * いた。この one-shot デバウンスだと、ペナルティ(既定 -0.4)が touchValence(既定
+ * +0.3)1〜2 回分で簡単に相殺されてしまい、連続タッチ中は大半の時間 v が +1.0
+ * 天井に張り付いて見える(60 秒窓内に 4 回以上という条件を「一度満たしたら区間を
+ * リセットする」のではなく「満たしている間は毎回適用する」状態条件にすべきだった)。
+ * リセットを削除し、60 秒のスライディングウィンドウ内に touchBurstCount 回以上の
+ * タッチが残っている間は毎回ペナルティを適用する(pruneOld が 60 秒超の履歴を
+ * 自然に落とすため、タッチが間隔を空けて起これば通常どおりペナルティなしに戻る)。
+ */
 export function pushTouch() {
   if (!started) return false
   try {
@@ -418,11 +469,11 @@ export function pushTouch() {
       state.v += ev.touchBurstValence
       state.a += ev.touchBurstArousal
       clampState()
-      touchTimestamps.length = 0
       trace(`[emotion] touch burst (overstimulated) -> v=${state.v.toFixed(2)} a=${state.a.toFixed(2)}\n`)
     } else {
       trace(`[emotion] touch -> v=${state.v.toFixed(2)} a=${state.a.toFixed(2)}\n`)
     }
+    notifyEmotionEventListeners({ type: 'touch', t: now })
     return true
   } catch (error) {
     trace(`[emotion] pushTouch failed: ${error}\n`)

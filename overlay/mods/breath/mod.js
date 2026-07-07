@@ -8,6 +8,7 @@ import { startLiveliness, shouldDeepBreathe, getDeepBreathParams, maybeSighForDe
 import { startMic } from 'breath/mic'
 import { startReactions } from 'breath/reactions'
 import { startEmotion, getEmotion } from 'breath/emotion'
+import { startLed } from 'breath/led'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
@@ -21,6 +22,10 @@ function jitter(seconds, spread = 0.03) {
   return seconds * (1 + (Math.random() * 2 - 1) * spread)
 }
 
+function clamp01(x) {
+  return x < 0 ? 0 : x > 1 ? 1 : x
+}
+
 function delay(ms) {
   return new Promise((resolve) => Timer.set(resolve, ms))
 }
@@ -30,7 +35,11 @@ async function animateMouth(robot, from, to, durationMs) {
   const stepMs = durationMs / steps
   for (let i = 1; i <= steps; i++) {
     const t = i / steps
-    robot.setMouthOpen(from + (to - from) * t)
+    const mouthOpen = from + (to - from) * t
+    robot.setMouthOpen(mouthOpen)
+    // v1.2.0 (E2) — led.js が呼吸連動の明るさゆらぎに読む(0..1、口の開きを
+    // MOUTH_EXHALE..MOUTH_DEEP_MAX で正規化)。led.js 不在時は誰も読まないだけ。
+    globalThis.breathPulse = clamp01((mouthOpen - MOUTH_EXHALE) / (MOUTH_DEEP_MAX - MOUTH_EXHALE))
     await delay(stepMs)
   }
 }
@@ -181,6 +190,15 @@ export function onRobotCreated(robot) {
       trace(`[emotion] start failed: ${error}\n`)
     }
   }, 8000)
+
+  // v1.2.0 (E2) — ヘッド LED を感情の環境光にする。
+  Timer.set(() => {
+    try {
+      startLed(robot)
+    } catch (error) {
+      trace(`[led] start failed: ${error}\n`)
+    }
+  }, 9000)
 }
 
 export default {
