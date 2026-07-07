@@ -189,6 +189,17 @@ Claude: 閾値・反応強度を PUT /params でライブ調整
 - [ ] 頭頂タッチの微反応
 - [ ] IMU 反応の試行（オフ既定）
 
+### E フェーズ — 感情 2 次元エンジンと全アクチュエータ統合（2026-07-07〜08、ユーザー指示「一旦全てを実装」）
+
+台帳: `docs/tasks/emotion-space-scenarios.md`（空間定義・力学・シナリオ 20）。
+
+- [x] **E1 感情エンジン + 表情変形**: `emotion.js`（(v,a) 指数回帰 + 微ノイズ + 時刻変調 + マイク/タッチ入力 + 派生モディファイア）。eye-cozmo に occluder 方式の表情変形（topLid/topAngle/botArc/scale/lift）。呼吸・サッカード・murmur・startle を連続変調。`POST /emotion/scenario {id:1..20}`・`PUT /emotion/state`・`POST /emotion/touch`・`GET /emotion`。全 20 シナリオ 200 応答・再起動ゼロ
+- [x] **E2 LED 環境光**: `led.js`（4Hz dirty-check。色相 = 快、明るさ = 覚醒 × 呼吸ゆらぎ、最大 18/255。sleepy 消灯、loud/clap で白ブースト、touch で暖色パルス）。`GET/PUT /led(/params)`・`POST /led/test`
+- [x] **E3 サーボ解禁 + 感情姿勢**: fork でゲート解除（`driverKey` は明示 config 優先）+ **NoneDriver ブートフォールバック** + 首追従閾値を config 化（breath は 45°）。`posture.js`（感情 → 見上げ角、45s+/4°+ のレート制限、startle のけぞりリコイル、`POST /posture/test`）。一瞥の首追従は lookAt 自動連動
+- [x] **tilt の符号と可動域を実機特定**: ドライバは `-rotation.p` を 0〜90° にクランプ = **機構は水平〜見上げしか動けない**。正の pitch を送ると全て 0 にクランプされ不動（初回テストで yaw だけ動いた原因）。posture.js は「見上げ角」セマンティクス（0 = 水平が最下）に統一し、うつむきは水平で近似
+- 既知の未解決: サーボ **READ が全タイムアウト**（WRITE は正常 — 書き込み専用バスの可能性。`rotationDeg` は常に 0,0。実害は姿勢フィードバック無しのみ）。E2 の 2 回目 OTA 後に一度だけ Wi-Fi setup モードに入り物理リセットが必要だった（単発・要観察）
+- 未検証（ユーザー評価待ち）: サーボ駆動音の印象（concept-v1 の宿題）、表情変形・LED の見た目の質、シナリオごとのチューニング
+
 ### Phase 4 — 統合と同席観察
 
 - [ ] 全要素の頻度バランス最終調整（「沈黙が正しい」に照らす）

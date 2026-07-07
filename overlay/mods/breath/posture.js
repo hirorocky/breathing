@@ -28,18 +28,20 @@ const TICK_MS = 5000 // 感情姿勢ループの周期
 
 const defaults = {
   enabled: true,
+  // pitch はすべて「見上げ角」(0 = 水平 = 機構の最下限。tilt は水平〜真上しか
+  // 動けない — ドライバが -rotation.p を 0〜90° にクランプするため。2026-07-07 特定)
   recoil: {
     enabled: true,
-    pitchDeltaDeg: 6, // のけぞりで浅くする角度
+    pitchDeltaDeg: 6, // のけぞりで一時的に上げる角度
     outTime: 0.15, // のけぞる速さ(秒)
     holdMs: 600, // のけぞりを保持する時間
     returnTime: 1.0, // 戻る速さ(秒)
   },
   pose: {
-    pitchBase: 15, // v=0, a=0 のときの基準 pitch(度)
-    pitchMin: 5, // 覚醒・快側の下限(見上げ側)
-    pitchMax: 25, // 沈静・不快側の上限(うつむき側)
-    pitchSleepy: 25, // sleepy 中はこの値に固定
+    pitchBase: 10, // v=0, a=0 のときの基準見上げ角(度)
+    pitchMin: 0, // 沈静・不快側の下限(水平 = 一番下がった姿勢)
+    pitchMax: 24, // 覚醒・快側の上限(見上げ)
+    pitchSleepy: 0, // sleepy 中は水平まで下げる(うつむきの近似)
     moveMinIntervalS: 45, // 感情姿勢の移動間隔の下限(秒)
     deltaMinDeg: 4, // この角度未満の差では動かさない
     timeMin: 1.2, // 移動時間の下限(秒)
@@ -120,7 +122,13 @@ function applyPosture(pitchDeg, yawDeg, time, label) {
     return false
   }
   moveInProgress = true
-  const pitchRad = (pitchDeg * Math.PI) / 180
+  // ドライバ(m5stackchan-servo.ts rotationToM5StackChanServoAngles)は pitch を
+  // -rotation.p で反転してから可動域 0〜90°(0.1° 単位で 0..900)にクランプする。
+  // つまり tilt 機構は「水平(0°)〜見上げ(90°)」しか動けず、rotation.p は
+  // **負の値 = 見上げ**。ここでの pitchDeg は「見上げ角(0 = 水平が最下限)」と
+  // 定義し、符号を反転して渡す(2026-07-07 実機で特定: 正の値は全て 0 に
+  // クランプされ首が全く動かなかった)。
+  const pitchRad = (-pitchDeg * Math.PI) / 180
   const yawRad = ((yawDeg ?? 0) * Math.PI) / 180
   trace(`[posture] ${label} pitch=${pitchDeg.toFixed(1)}deg yaw=${(yawDeg ?? 0).toFixed(1)}deg time=${time.toFixed(2)}s\n`)
   safeSetTorque(true)
@@ -150,9 +158,12 @@ function performTick() {
     }
 
     const cfg = params.pose
+    // pitchDeg = 見上げ角(0 = 水平が機構の最下限。ドライバの符号反転仕様に合わせて
+    // applyPosture で -p に変換される)。快・覚醒で顔が上がり、沈静・不快で水平まで
+    // 下がる。sleepy は最下(水平)= うつむきの近似。
     const targetPitch = emo.sleepy
       ? cfg.pitchSleepy
-      : clamp(cfg.pitchBase - emo.v * 6 - emo.a * 8, cfg.pitchMin, cfg.pitchMax)
+      : clamp(cfg.pitchBase + emo.v * 6 + emo.a * 8, cfg.pitchMin, cfg.pitchMax)
 
     if (currentPitchDeg === null) {
       // 初回 tick は基準値を記録するだけ(起動直後にいきなり動かさない)。
@@ -195,7 +206,8 @@ export function triggerRecoil() {
     }
 
     const base = currentPitchDeg ?? params.pose.pitchBase
-    const recoilPitch = clamp(base - params.recoil.pitchDeltaDeg, 0, 90)
+    // のけぞり = 見上げ角を一時的に増やす(新セマンティクス: + が上)。
+    const recoilPitch = clamp(base + params.recoil.pitchDeltaDeg, 0, 90)
 
     moveInProgress = true
     trace(`[posture] recoil pitch=${recoilPitch.toFixed(1)}deg (base=${base.toFixed(1)})\n`)
