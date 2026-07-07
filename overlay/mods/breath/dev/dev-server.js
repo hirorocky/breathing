@@ -27,6 +27,7 @@ import {
   startValenceDrift,
 } from 'breath/emotion'
 import { getLedStatus, setLedParams, testLed } from 'breath/led'
+import { getPostureStatus, setPostureParams, testPosture } from 'breath/posture'
 
 /**
  * Wi-Fi 開発環境 Phase 1/2 — GET /status・PUT /ota + mDNS（v1.0.1 dev tools）。
@@ -1530,6 +1531,201 @@ const ledTestRoute = {
   },
 }
 
+/**
+ * GET /posture(v1.3.0 E3 — サーボ解禁 + 感情姿勢)。現在パラメータ + 状態
+ * (currentPitchDeg・moveInProgress・hasPoseApi・lastMoveAgoS)。reactRoute と同型。
+ */
+const postureRoute = {
+  onRequest(request) {
+    this.sent = 0
+    if ('GET' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    try {
+      this.status = 200
+      this.data = ArrayBuffer.fromString(JSON.stringify(getPostureStatus()))
+    } catch (error) {
+      trace(`[dev] posture status build failed: ${error}\n`)
+      this.status = 500
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    try {
+      this.read(count)
+    } catch (_error) {
+      // 握りつぶす。body は想定しないが読み切ってハングを避ける。
+    }
+  },
+  onResponse(response) {
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] posture connection error: ${message}\n`)
+  },
+}
+
+/** PUT /posture/params(要 x-dev-token)。部分更新(reactParamsRoute と同型)。 */
+const postureParamsRoute = {
+  onRequest(request) {
+    this.method = request.method
+    this.sent = 0
+    this.chunks = []
+
+    if ('PUT' === request.method) {
+      if (!isAuthorized(request)) {
+        this.status = 401
+        this.data = ArrayBuffer.fromString('')
+        trace('[dev] posture params rejected: bad or missing x-dev-token\n')
+      } else {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      }
+    } else {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+    }
+  },
+  onReadable(count) {
+    // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] posture params read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if ('PUT' === this.method && 200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const params = setPostureParams(body)
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: true, params }))
+      } catch (error) {
+        trace(`[dev] posture params update failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] posture params connection error: ${message}\n`)
+  },
+}
+
+/**
+ * POST /posture/test(要 x-dev-token)。body `{"yawDeg":0,"pitchDeg":15,"time":1.0}` で
+ * レート制限を無視した直接姿勢テスト(reactStartleRoute/ledTestRoute と同型)。
+ */
+const postureTestRoute = {
+  onRequest(request) {
+    this.sent = 0
+    this.chunks = []
+
+    if ('POST' !== request.method) {
+      this.status = 405
+      this.data = ArrayBuffer.fromString('')
+      return
+    }
+    if (!isAuthorized(request)) {
+      this.status = 401
+      this.data = ArrayBuffer.fromString('')
+      trace('[dev] posture test rejected: bad or missing x-dev-token\n')
+      return
+    }
+    this.status = 200 // 本文を読み終えてから onResponse で確定する
+  },
+  onReadable(count) {
+    let bytes
+    try {
+      bytes = this.read(count)
+    } catch (error) {
+      trace(`[dev] posture test read failed: ${error}\n`)
+      this.status = 500
+      return
+    }
+    if (200 === this.status && bytes) this.chunks.push(bytes)
+  },
+  onResponse(response) {
+    if (200 === this.status) {
+      try {
+        let total = 0
+        for (const chunk of this.chunks) total += chunk.byteLength
+        const merged = new Uint8Array(total)
+        let offset = 0
+        for (const chunk of this.chunks) {
+          merged.set(new Uint8Array(chunk), offset)
+          offset += chunk.byteLength
+        }
+        const body = JSON.parse(String.fromArrayBuffer(merged.buffer))
+        const ok = testPosture(body?.yawDeg, body?.pitchDeg, body?.time)
+        this.status = ok ? 200 : 503
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok }))
+      } catch (error) {
+        trace(`[dev] posture test failed: ${error}\n`)
+        this.status = 400
+        this.data = ArrayBuffer.fromString(JSON.stringify({ ok: false, error: String(error) }))
+      }
+    }
+    response.status = this.status
+    response.headers.set('content-type', 'application/json')
+    response.headers.set('content-length', this.data.byteLength)
+    this.respond(response)
+  },
+  onWritable(count) {
+    const remaining = this.data.byteLength - this.sent
+    if (remaining <= 0) {
+      this.write()
+      return
+    }
+    const use = Math.min(count, remaining)
+    this.write(new Uint8Array(this.data, this.sent, use))
+    this.sent += use
+  },
+  onError(message) {
+    trace(`[dev] posture test connection error: ${message}\n`)
+  },
+}
+
 const router = new Map([
   ['/status', statusRoute],
   ['/ota', otaRoute],
@@ -1549,6 +1745,9 @@ const router = new Map([
   ['/led', ledRoute],
   ['/led/params', ledParamsRoute],
   ['/led/test', ledTestRoute],
+  ['/posture', postureRoute],
+  ['/posture/params', postureParamsRoute],
+  ['/posture/test', postureTestRoute],
 ])
 
 const CRY_PLAY_PREFIX = '/cry/'

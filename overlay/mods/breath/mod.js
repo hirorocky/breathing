@@ -9,6 +9,7 @@ import { startMic } from 'breath/mic'
 import { startReactions } from 'breath/reactions'
 import { startEmotion, getEmotion } from 'breath/emotion'
 import { startLed } from 'breath/led'
+import { startPosture } from 'breath/posture'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
@@ -199,6 +200,16 @@ export function onRobotCreated(robot) {
       trace(`[led] start failed: ${error}\n`)
     }
   }, 9000)
+
+  // v1.3.0 (E3) — サーボ解禁 + 感情姿勢(頭の pitch)。robot が pose API を持たない
+  // (driver が none にフォールバックした)場合も startPosture 内で安全に no-op になる。
+  Timer.set(() => {
+    try {
+      startPosture(robot)
+    } catch (error) {
+      trace(`[posture] start failed: ${error}\n`)
+    }
+  }, 10000)
 }
 
 export default {

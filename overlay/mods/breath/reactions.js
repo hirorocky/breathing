@@ -5,6 +5,7 @@ import { onMicEvent } from 'breath/mic'
 import { playCry } from 'breath/cry'
 import { deferGaze } from 'breath/liveliness'
 import { getEmotion } from 'breath/emotion'
+import { triggerRecoil } from 'breath/posture'
 
 /**
  * v1.1.0 Phase 3c #1 — 総合表現「startle + 方向つき一瞥」
@@ -12,9 +13,12 @@ import { getEmotion } from 'breath/emotion'
  *
  * トリガは `breath/mic` の `onMicEvent` が発火する 'loud'/'clap'(3b)。方向は
  * 3b+ の相互相関(オンセット基準・放物線補間)による `lagX100`(正 = ユーザー
- * 視点で左、負 = 右)から決める。反応は稀(不応期 8s 既定)・弱(目だけ、首
- * サーボ・LED は使わない)・「間」あり(200〜600ms のランダム遅延) —
- * concept-v1 の非指示・第三焦点の原則そのまま。
+ * 視点で左、負 = 右)から決める。反応は稀(不応期 8s 既定)・弱(目・LED は使わない)・
+ * 「間」あり(200〜600ms のランダム遅延) — concept-v1 の非指示・第三焦点の原則
+ * そのまま。v1.3.0(E3)でサーボを解禁した際、`performGlance` 冒頭だけ
+ * `breath/posture` の `triggerRecoil()`(のけぞり)を静的 import で追加した
+ * (params.recoil.enabled が false なら no-op。首を振る動作自体は依然 lookAt の
+ * 自動追従にのみ任せ、ここから明示的に yaw を動かすことはしない)。
  *
  * 視線は `breath/liveliness` の `lookAt` 座標系(x=前方距離固定 0.7、y=左右)
  * に倣う。反応中は liveliness の gaze スケジューラが idle 視線で上書きしない
@@ -144,6 +148,12 @@ function returnToCenter() {
 }
 
 function performGlance(dir, willCry, holdMs, ampScale) {
+  try {
+    triggerRecoil()
+  } catch (error) {
+    trace(`[react] recoil trigger failed: ${error}\n`)
+  }
+
   try {
     if (robotRef) {
       const y = dir === 0 ? (Math.random() * 2 - 1) * CENTER_JITTER_Y * ampScale : dir * params.glance.sideY * ampScale
