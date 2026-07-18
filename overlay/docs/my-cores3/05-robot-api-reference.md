@@ -2,13 +2,13 @@
 
 このドキュメントは、MODの `onRobotCreated(robot, device)` などから使える `robot`（`firmware/stackchan/robot.ts` の `Robot` クラスのインスタンス）が持つ公開メソッド・プロパティをカテゴリ別の表にまとめたものです。索引は [`./README.md`](./README.md) を参照してください。MODの作り方全般は [`./02-mod-development.md`](./02-mod-development.md)、表情/声/視線の仕組みの詳細は [`./03-face-voice-behavior.md`](./03-face-voice-behavior.md) を参照してください。
 
-すべてのシグネチャは `firmware/stackchan/robot.ts` を実際に読んで確認したものです。曖昧な部分は断定せず「詳細はrobot.ts参照」と明記しています。
+公開 API の正本は `stack-chan/firmware/stackchan/robot.ts` と関連する型定義です。本表と差がある場合はコードを優先してください。
 
 ## 1. 発話・音声
 
 | API（シグネチャ） | 説明 | 補足/例 |
 | --- | --- | --- |
-| `async say(text: string, volume?: number): Promise<Maybe<string>>` | TTSエンジンで `text` を発話する。完了時に `{ success: true, value: text }`、失敗時に `{ success: false, reason }` を返す。 | `text` の意味はTTSエンジンにより異なる（`local` なら音声資産のキー、`remote`系ならそのまま読み上げるテキスト）。詳細は [`./03-face-voice-behavior.md`](./03-face-voice-behavior.md) の「B. 声（TTS）」参照。`volume` は省略可。 |
+| `async say(text: string, volume?: number): Promise<Maybe<string>>` | TTS エンジンで `text` を発話する。完了時に `{ success: true, value: text }`、失敗時に `{ success: false, reason }` を返す。 | breath はこの API を使わず、非言語音を `cry.js` で再生する。`volume` は省略可。 |
 | `async record(durationMilliSec?: number): Promise<ArrayBuffer>` | マイクから録音し、WAVフォーマットの `ArrayBuffer` を返す。 | `durationMilliSec` 省略時は内部実装（`Microphone#record`）の既定値（3000ms）。マイクが無い機体では `Error('This device does not support a microphone.')` を投げる。 |
 | `async tone(hz: number, duration: number, volume?: number): Promise<void>` | 指定した周波数 `hz` ・時間 `duration`（ミリ秒）でトーン音を再生する。 | `volume` は0〜1。範囲外だと `Error('Volume must be between 0 and 1')` を投げる。再生完了まで待つ。 |
 | `async playAudio(buffer: ArrayBuffer): Promise<boolean>` | 音声バッファをそのまま再生する。 | 内部で `tone` オブジェクトの `play()` を呼ぶ。`play` が実装されていない場合は `false` を返す。`record()` で録った音声の再生などに使う。 |
@@ -27,7 +27,7 @@
 
 | API（シグネチャ） | 説明 | 補足/例 |
 | --- | --- | --- |
-| `lookAt(position: Vector3): void` | 注視点を設定する。`Vector3` は `[x, y, z]`（メートル単位）。 | 同期的に完了し、この関数自体は動きの開始/終了を知らない。実際の目・首の動きは内部の周期処理（`updateFace()`/`updatePose()`）が担う。仕組みの詳細は [`./03-face-voice-behavior.md`](./03-face-voice-behavior.md) 「C. 振る舞い」参照。 |
+| `lookAt(position: Vector3): void` | 注視点を設定する。`Vector3` は `[x, y, z]`（メートル単位）。 | 同期的に完了し、この関数自体は動きの開始/終了を知らない。実際の目・首の動きは内部の周期処理（`updateFace()` / `updatePose()`）が担う。breath での接続は [`03-face-voice-behavior.md`](./03-face-voice-behavior.md) の「視線と姿勢」を参照する。 |
 | `lookAway(): void` | 注視点を解除する。 | 以降、目・首は注視点方向を追わなくなる。 |
 | `async setPose(pose: Pose, time?: number): Promise<void>` | ポーズ（`Rotation`）を直接設定する。**`@experimental`**（仕様変更の可能性あり）。 | 内部で `driver.applyRotation(pose.rotation, time)` を呼ぶだけの薄いラッパー。`Pose` は `{ position: {x,y,z}, rotation: {r,p,y} }`（`firmware/stackchan/utilities/stackchan-util.ts`）。 |
 | `async setTorque(torque: boolean): Promise<void>` | サーボのトルクON/OFFを設定する。 | 内部で `driver.setTorque(torque)` を呼ぶ。 |
@@ -102,9 +102,9 @@ if (robot.imu != null) {
 
 ## 関連ドキュメント
 
-- 視線/首振りの詳しい仕組み（`lookAt`/`lookAway`/`setPose` が内部でどう動くか）は [`./03-face-voice-behavior.md`](./03-face-voice-behavior.md) の「C. 振る舞い」を参照してください。
-- TTSエンジンの種類によって `say()` の `text` 引数の意味が変わる点（`local` はキー、`remote`系はそのままのテキストなど）も [`./03-face-voice-behavior.md`](./03-face-voice-behavior.md) の「B. 声（TTS）」を参照してください。
+- breath での顔、非言語音、視線、姿勢の接続は [`03-face-voice-behavior.md`](./03-face-voice-behavior.md) を参照する。
+- breath MOD の構成と実装原則は [`02-mod-development.md`](./02-mod-development.md) を参照する。
 
-## APIドキュメントの自動生成
+## API ドキュメントの生成
 
-このAPI早見表は手動でまとめたものです。より正確・網羅的な最新情報が必要な場合は、`firmware/stackchan/robot.ts` のTSDocコメントから `npm run generate-apidoc`（`firmware/` ディレクトリで実行）でAPIドキュメントを自動生成できます。出力先は `firmware/docs/api/` です。
+`stack-chan/firmware/` で `npm run generate-apidoc` を実行すると、TSDoc から `firmware/docs/api/` を生成できます。

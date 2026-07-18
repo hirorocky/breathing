@@ -1,6 +1,7 @@
-# tasks — 未実行のタスク
+# tasks — 未完の作業
 
-- [v1.1.0 — 生き物の気配（鳴き声・微挙動・微反応）](./open-items.md) — **現在**
-- [journal/v1.0.0.md](../journal/v1.0.0.md) — v1.0.0（完了）
+- [open-items.md](open-items.md) — 実装、実機評価、同席観察
+- [elegnt-expression-design.md](elegnt-expression-design.md) — 表現設計の判断基準
+- [emotion-space-scenarios.md](emotion-space-scenarios.md) — 感情空間の評価シナリオ
 
-Web 版デプロイ手順（`deploy.md`）は StackChan 移行に伴い削除。
+完了した作業の記録は置かない。経緯は Git 履歴、観察は [journal](../journal/) を参照する。

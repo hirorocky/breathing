@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 # Initialize the stack-chan submodule (fork, breath branch).
-#
-# Firmware-side changes now live directly in the stack-chan submodule
-# (fork hirorocky/stack-chan, branch `breath`) — patch-file application was
-# retired. This script just makes sure the submodule is checked out.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,7 +15,10 @@ fi
 echo
 echo "Done. Firmware dir: $SUBMODULE/firmware"
 echo "  cd stack-chan/firmware"
-echo "  npm install && npm run setup -- --device=esp32  (first time)"
+echo "  npm install"
+echo "  npm run setup"
+echo "  npm run setup -- --device=esp32"
+echo "  npm run doctor"
 echo "  npm run build:breath:m5stackchan-cores3"
 echo "  npm run deploy:breath:m5stackchan-cores3"
 echo

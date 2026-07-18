@@ -9,6 +9,7 @@ import { startMic } from 'breath/mic'
 import { startReactions } from 'breath/reactions'
 import { startEmotion, getEmotion } from 'breath/emotion'
 import { startLed } from 'breath/led'
+import { startPowerControl } from 'breath/power'
 import { startPosture } from 'breath/posture'
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
@@ -108,6 +109,12 @@ async function breathLoop(robot) {
 
 export function onRobotCreated(robot) {
   trace('[breath] mod onRobotCreated\n')
+
+  try {
+    startPowerControl(robot)
+  } catch (error) {
+    trace(`[power] start failed: ${error}\n`)
+  }
 
   Timer.set(() => {
     void breathLoop(robot).catch((error) => {

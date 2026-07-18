@@ -204,6 +204,8 @@ class SettingsBarBehavior extends Behavior {
     content.visible = true
     this.applyPosition(content)
     this.startHideTimer(content)
+    globalThis.breathSettingsBarOpen = true
+    globalThis.breathSettingsShowCount = (globalThis.breathSettingsShowCount ?? 0) + 1
     trace('[settings-bar] showBar\n')
     return true
   }
@@ -215,6 +217,7 @@ class SettingsBarBehavior extends Behavior {
     this.slideY = SLIDE_HIDDEN
     content.visible = false
     this.applyPosition(content)
+    globalThis.breathSettingsBarOpen = false
     trace('[settings-bar] hideBar\n')
     return true
   }
@@ -306,7 +309,12 @@ const SettingsBar = Container.template(() => ({
 }))
 
 export function attachSettingsBar(robot) {
-  const bar = new SettingsBar({}, { robot })
+  const app = robot.renderer?.application
+  if (!app) throw new Error('renderer application is unavailable')
+
+  // Piu の第1引数が Behavior#onCreate の data。dictionary へ robot を渡しても
+  // SettingsBarBehavior からは参照できない。
+  const bar = new SettingsBar({ robot })
 
   const BottomSwipeZone = Container.template(() => ({
     name: 'breath-settings-swipe',
@@ -317,28 +325,33 @@ export function attachSettingsBar(robot) {
     active: true,
     backgroundTouch: true,
     Behavior: class extends Behavior {
-      onTouchBegan(_content, _id, _x, y) {
-        this.touchStartY = y
+      onDisplaying(content) {
+        const bounds = content.bounds
+        globalThis.breathSettingsSwipeBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+        trace(`[settings-bar] swipe zone displaying: ${content.width}x${content.height} bounds=${bounds.x},${bounds.y},${bounds.width},${bounds.height}\n`)
       }
 
-      onTouchEnded(_content, _id, _x, y) {
+      onTouchBegan(_content, id, x, y) {
+        globalThis.breathSettingsTouchCount = (globalThis.breathSettingsTouchCount ?? 0) + 1
+        this.touchStartY = y
+        trace(`[settings-bar] touch began: id=${id} x=${x} y=${y}\n`)
+      }
+
+      onTouchEnded(_content, id, x, y) {
         if (this.touchStartY == null) return
         const dy = y - this.touchStartY
         this.touchStartY = null
+        globalThis.breathSettingsLastDy = dy
+        trace(`[settings-bar] touch ended: id=${id} x=${x} y=${y} dy=${dy}\n`)
         const barBehavior = bar.behavior
-        if (!barBehavior.open && dy <= -MIN_SWIPE_DY) {
-          trace('[settings-bar] swipe up\n')
-          bar.delegate('showBar')
-        } else if (barBehavior.open && dy >= MIN_SWIPE_DY) {
-          trace('[settings-bar] swipe down\n')
-          bar.delegate('hideBar')
-        }
+        if (!barBehavior.open && dy <= -MIN_SWIPE_DY) bar.delegate('showBar')
+        else if (barBehavior.open && dy >= MIN_SWIPE_DY) bar.delegate('hideBar')
       }
     },
   }))
 
-  robot.renderer?.addDecorator(new BottomSwipeZone({}))
-  robot.renderer?.addDecorator(bar)
+  robot.renderer.addDecorator(new BottomSwipeZone({}))
+  robot.renderer.addDecorator(bar)
 
   trace(`[settings-bar] attached v${SETTINGS_BAR_VERSION}\n`)
 }

@@ -86,6 +86,8 @@ class StatusBarBehavior extends Behavior {
     this.applyPosition(content)
     this.startLabelTimer()
     this.startHideTimer(content)
+    globalThis.breathStatusBarOpen = true
+    globalThis.breathStatusShowCount = (globalThis.breathStatusShowCount ?? 0) + 1
     trace('[status-bar] showBar\n')
   }
 
@@ -97,6 +99,7 @@ class StatusBarBehavior extends Behavior {
     this.slideY = SLIDE_HIDDEN
     content.visible = false
     this.applyPosition(content)
+    globalThis.breathStatusBarOpen = false
     trace('[status-bar] hideBar\n')
   }
 }
@@ -117,6 +120,9 @@ const StatusBar = Container.template(() => ({
 }))
 
 export function attachStatusBar(robot) {
+  const app = robot.renderer?.application
+  if (!app) throw new Error('renderer application is unavailable')
+
   const bar = new StatusBar({})
 
   const TopSwipeZone = Container.template(() => ({
@@ -128,28 +134,33 @@ export function attachStatusBar(robot) {
     active: true,
     backgroundTouch: true,
     Behavior: class extends Behavior {
-      onTouchBegan(_content, _id, _x, y) {
-        this.touchStartY = y
+      onDisplaying(content) {
+        const bounds = content.bounds
+        globalThis.breathStatusSwipeBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+        trace(`[status-bar] swipe zone displaying: ${content.width}x${content.height} bounds=${bounds.x},${bounds.y},${bounds.width},${bounds.height}\n`)
       }
 
-      onTouchEnded(_content, _id, _x, y) {
+      onTouchBegan(_content, id, x, y) {
+        globalThis.breathStatusTouchCount = (globalThis.breathStatusTouchCount ?? 0) + 1
+        this.touchStartY = y
+        trace(`[status-bar] touch began: id=${id} x=${x} y=${y}\n`)
+      }
+
+      onTouchEnded(_content, id, x, y) {
         if (this.touchStartY == null) return
         const dy = y - this.touchStartY
         this.touchStartY = null
+        globalThis.breathStatusLastDy = dy
+        trace(`[status-bar] touch ended: id=${id} x=${x} y=${y} dy=${dy}\n`)
         const barBehavior = bar.behavior
-        if (!barBehavior.open && dy >= MIN_SWIPE_DY) {
-          trace('[status-bar] swipe down\n')
-          bar.delegate('showBar')
-        } else if (barBehavior.open && dy <= -MIN_SWIPE_DY) {
-          trace('[status-bar] swipe up\n')
-          bar.delegate('hideBar')
-        }
+        if (!barBehavior.open && dy >= MIN_SWIPE_DY) bar.delegate('showBar')
+        else if (barBehavior.open && dy <= -MIN_SWIPE_DY) bar.delegate('hideBar')
       }
     },
   }))
 
-  robot.renderer?.addDecorator(new TopSwipeZone({}))
-  robot.renderer?.addDecorator(bar)
+  robot.renderer.addDecorator(new TopSwipeZone({}))
+  robot.renderer.addDecorator(bar)
 
   trace(`[status-bar] attached v${STATUS_BAR_VERSION}\n`)
 }

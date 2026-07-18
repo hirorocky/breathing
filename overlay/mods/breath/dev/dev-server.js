@@ -53,6 +53,7 @@ import { getPostureStatus, setPostureParams, testPosture } from 'breath/posture'
 const MDNS_HOST_NAME = 'stackchan'
 const HTTP_PORT = 80
 const RESTART_DELAY_MS = 1000
+const OTA_PROGRESS_BYTES = 1024 * 1024
 
 const Natives = new FFI()
 
@@ -80,6 +81,24 @@ function buildStatusPayload() {
     uptimeMs: Time.ticks,
     // デバッグ計器(eye-cozmo が毎フレーム書く描画オフセット px。一瞥の符号バグ調査 2026-07-07)
     dbgGaze: { l: globalThis.breathDbgGazeL ?? null, r: globalThis.breathDbgGazeR ?? null },
+    touchDebug: {
+      screenTouch: Boolean(globalThis.screen?.touch),
+      statusBounds: globalThis.breathStatusSwipeBounds ?? null,
+      settingsBounds: globalThis.breathSettingsSwipeBounds ?? null,
+      statusTouches: globalThis.breathStatusTouchCount ?? 0,
+      settingsTouches: globalThis.breathSettingsTouchCount ?? 0,
+      statusLastDy: globalThis.breathStatusLastDy ?? null,
+      settingsLastDy: globalThis.breathSettingsLastDy ?? null,
+      statusOpen: globalThis.breathStatusBarOpen ?? false,
+      settingsOpen: globalThis.breathSettingsBarOpen ?? false,
+      statusShows: globalThis.breathStatusShowCount ?? 0,
+      settingsShows: globalThis.breathSettingsShowCount ?? 0,
+      powerRawState: globalThis.breathPowerRawState ?? null,
+      powerRawEvents: globalThis.breathPowerRawEventCount ?? 0,
+      powerLastKeyState: globalThis.breathPowerLastKeyState ?? null,
+      powerOnSource: globalThis.breathPowerOnSource ?? null,
+      intentionalOff: globalThis.breathIntentionalOff ?? null,
+    },
   }
 }
 
@@ -136,6 +155,8 @@ const statusRoute = {
 const otaRoute = {
   onRequest(request) {
     this.bytesReceived = 0
+    this.byteLength = parseInt(request.headers.get('content-length') ?? '', 10)
+    this.nextProgressBytes = OTA_PROGRESS_BYTES
     this.updater = null
 
     if (!isAuthorized(request)) {
@@ -147,22 +168,29 @@ const otaRoute = {
       this.status = 405
       return
     }
+    if (!Number.isFinite(this.byteLength) || this.byteLength <= 0) {
+      this.status = 411
+      trace('[dev] ota rejected: valid content-length required\n')
+      return
+    }
     try {
       this.status = 200
       this.updater = OTA.open({ partition: flash.open({ path: 'nextota' }) })
-      trace('[dev] ota open\n')
+      trace(`[dev] ota open: ${this.byteLength} bytes\n`)
     } catch (error) {
       trace(`[dev] ota open failed: ${error}\n`)
       this.status = 500
       this.updater = null
     }
   },
-  onReadable(count) {
+  onReadable(_count) {
     // 認証/オープン失敗時も含め、必ず読み切って state machine を進める
     // （読まないと HTTP レスポンスに進めず接続がハングする）。
     let bytes
     try {
-      bytes = this.read(count)
+      // HTTPServer の公式 OTA 例と同じく、通知された count を socket read の
+      // 引数にせず、HTTP body として現在読めるチャンクを取得する。
+      bytes = this.read()
     } catch (error) {
       trace(`[dev] ota read failed: ${error}\n`)
       this.status = 500
@@ -172,6 +200,10 @@ const otaRoute = {
     try {
       this.updater.write(bytes)
       this.bytesReceived += bytes.byteLength
+      if (this.bytesReceived >= this.nextProgressBytes) {
+        trace(`[dev] ota progress: ${this.bytesReceived}/${this.byteLength}\n`)
+        this.nextProgressBytes += OTA_PROGRESS_BYTES
+      }
     } catch (error) {
       trace(`[dev] ota write failed: ${error}\n`)
       this.status = 500
@@ -184,15 +216,27 @@ const otaRoute = {
     }
   },
   onResponse(response) {
+    if (200 === this.status && this.bytesReceived !== this.byteLength) {
+      trace(`[dev] ota size mismatch: ${this.bytesReceived}/${this.byteLength}\n`)
+      this.status = 400
+    }
+
     if (200 === this.status && this.updater) {
       try {
         this.updater.complete()
+        this.updater.close()
         this.updater = null
         trace(`[dev] ota complete: ${this.bytesReceived} bytes, restarting in ${RESTART_DELAY_MS}ms\n`)
         Timer.set(() => Natives.esp_restart(), RESTART_DELAY_MS)
       } catch (error) {
         trace(`[dev] ota complete failed: ${error}\n`)
         this.status = 500
+        try {
+          this.updater?.close()
+        } catch (_closeError) {
+          // 握りつぶす。abort させない。
+        }
+        this.updater = null
       }
     } else if (this.updater) {
       try {

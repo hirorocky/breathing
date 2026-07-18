@@ -563,6 +563,38 @@ export function startLed(robot) {
   trace('[led] started (E2.1 per-LED envelope)\n')
 }
 
+/** 電源断前に描画タイマーを止め、PY32 の保持 LED RAM を全消灯へ更新する。 */
+export function stopLed(robot) {
+  started = false
+  if (tickTimerId) {
+    Timer.clear(tickTimerId)
+    tickTimerId = null
+  }
+  effectType = EFFECT_NONE
+  sweepActive = false
+  manualUntilTicks = -1e15
+  frame.fill(0)
+
+  try {
+    robot?.led?.head?.off()
+  } catch (error) {
+    trace(`[led] power-off head.off failed: ${error}\n`)
+  }
+
+  try {
+    if (expander) {
+      for (let i = 0; i < LED_COUNT; i++) expander.setLedColor(i, 0, 0, 0)
+      expander.refreshLeds()
+    }
+    applied.fill(0)
+    trace('[led] stopped and cleared for power-off\n')
+    return true
+  } catch (error) {
+    trace(`[led] power-off clear failed: ${error}\n`)
+    return false
+  }
+}
+
 /** GET /led — フレームバッファ要約(モード・点灯数・代表色 = 最輝 LED)+ params。 */
 export function getLedStatus() {
   const now = Time.ticks

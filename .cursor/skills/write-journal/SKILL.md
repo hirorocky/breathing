@@ -29,7 +29,7 @@ description: Writes or updates exploration journal entries in docs/journal for t
 ### 1. 版と文脈を確認する
 
 - どの版か（`vX.Y.Z`）。未決なら一緒に決める
-- 観察期間・本番 URL（ユーザーが言うまで推測しない）
+- 観察期間・観察場所（ユーザーが言うまで推測しない）
 - 必要なら、コミットや diff から **事実だけ**（「何を試したか」）を箇条書きで提示し、**観察ではない** と明示する
 
 ### 2. 観察を聞く
@@ -62,7 +62,7 @@ description: Writes or updates exploration journal entries in docs/journal for t
 
 ## 原則
 
-1. **journal 依頼では実装を変えない**（`components/` `app/` `worker/` 等）。ユーザーが明示したときだけコードへ手を伸ばす
+1. **journal 依頼では実装を変えない。** ユーザーが明示したときだけコードへ手を伸ばす
 2. **存在負荷**の観点で書く（下がったか、上がったか、副作用）— ただし内容はユーザー由来
 3. **KPI・滞在時間・人数目標は書かない**。質感・迷い・寂しさ・操作の重さなど
 4. ユーザーの観察文は **要約せず核を残す**。言い換えは最小限
@@ -104,8 +104,8 @@ description: Writes or updates exploration journal entries in docs/journal for t
 # vX.Y.Z
 
 - **タグ**: `vX.Y.Z`（未付与ならその旨）
-- **本番**: https://breathing-4k7.pages.dev
 - **観察期間**: YYYY-MM-DD 〜 …
+- **観察場所**: （ユーザーと確認した場所）
 - **位置づけ**: この版を一言で
 
 ## この版の位置づけ
@@ -184,7 +184,7 @@ description: Writes or updates exploration journal entries in docs/journal for t
 → これまでの対話で出た観察・気づきだけを統合。会話にない段落は追加しない。git 手順は案内のみ（コミット・タグはユーザー依頼時）。
 
 **journal だけ、実装を変えないで**
-→ スキル全体のデフォルト。コード・CSS・`stack-chan/` upstream も触らない（journal / concept 依頼時）。`overlay/` のパッチ追加は別依頼。
+→ スキル全体のデフォルト。実装ファイルや `stack-chan/` には触らない。`overlay/` の変更は別依頼。
 
 ---
 
@@ -207,5 +207,5 @@ EOF
 
 ## 参照
 
-- 探求の目的・ループ: [docs/concept-v1/01-purpose.md](../../../docs/concept-v1/01-purpose.md)
+- 探求の目的・ループ: [docs/concept/01-purpose.md](../../../docs/concept/01-purpose.md)
 - 記述例（対話で埋めた完成形）: [docs/journal/v0.1.0.md](../../../docs/journal/v0.1.0.md)

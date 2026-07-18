@@ -31,6 +31,7 @@ BIN_PATH="$HOME/.local/share/moddable/build/tmp/esp32/m5stackchan_cores3/debug/s
 DEV_TOKEN="breath-dev"
 POLL_TIMEOUT_SEC=180
 POLL_INTERVAL_SEC=3
+UPLOAD_TIMEOUT_SEC=600
 
 BUILD_ID="$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%H%M%S)"
 
@@ -46,7 +47,7 @@ fi
 echo "[ota-deploy] build ok: $(ls -l "$BIN_PATH" | awk '{print $5, $NF}')"
 
 echo "[ota-deploy] upload: PUT http://$HOST/ota"
-if ! curl -sf -T "$BIN_PATH" "http://$HOST/ota" -H "x-dev-token: $DEV_TOKEN"; then
+if ! curl -sf --connect-timeout 10 --max-time "$UPLOAD_TIMEOUT_SEC" -H 'Expect:' -H "x-dev-token: $DEV_TOKEN" -T "$BIN_PATH" "http://$HOST/ota"; then
   echo "[ota-deploy] ERROR: upload failed (device should still be running the previous firmware)" >&2
   exit 1
 fi
