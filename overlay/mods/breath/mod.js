@@ -138,6 +138,7 @@ export function onRobotCreated(robot) {
     try {
       attachSettingsBar(robot)
     } catch (error) {
+      globalThis.breathSettingsAttachError = String(error)
       trace(`[settings-bar] attach failed: ${error}\n`)
     }
   }, 2000)

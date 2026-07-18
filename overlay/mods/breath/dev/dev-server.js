@@ -93,6 +93,7 @@ function buildStatusPayload() {
       settingsOpen: globalThis.breathSettingsBarOpen ?? false,
       statusShows: globalThis.breathStatusShowCount ?? 0,
       settingsShows: globalThis.breathSettingsShowCount ?? 0,
+      settingsAttachError: globalThis.breathSettingsAttachError ?? null,
       powerRawState: globalThis.breathPowerRawState ?? null,
       powerRawEvents: globalThis.breathPowerRawEventCount ?? 0,
       powerLastKeyState: globalThis.breathPowerLastKeyState ?? null,

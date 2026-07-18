@@ -89,6 +89,7 @@ for (let i = 0; i < 256; i++) GAMMA[i] = Math.round(255 * ((i / 255) ** 2.2))
 const defaults = {
   enabled: true,
   coreBright: 90, // 点灯 LED の基準色値上限(主要チャンネル)
+  brightnessScale: 1, // 最小色値を保ったまま点灯幅を絞る全体輝度係数
   envelopeMax: 12, // a=+1 のときの点灯幅(LED 個数)
   envelopeMin: 2, // a=-1 のときの点灯幅
   breathSwing: 3, // 呼吸での伸縮幅(LED 個数、±swing/2)
@@ -160,6 +161,7 @@ function gamma01(t) {
 
 function clampLedParams(target) {
   if (typeof target.coreBright === 'number') target.coreBright = clamp(Math.round(target.coreBright), QUANT_FLOOR, 255)
+  if (typeof target.brightnessScale === 'number') target.brightnessScale = clamp(target.brightnessScale, 0.1, 1)
   if (typeof target.envelopeMax === 'number') target.envelopeMax = clamp(target.envelopeMax, 1, LED_COUNT)
   if (typeof target.envelopeMin === 'number') target.envelopeMin = clamp(target.envelopeMin, 0, LED_COUNT)
   if (typeof target.breathSwing === 'number') target.breathSwing = clamp(target.breathSwing, 0, 6)
@@ -232,7 +234,7 @@ function currentWidth(a) {
   const envMin = Math.min(params.envelopeMin, params.envelopeMax)
   const base = envMin + (params.envelopeMax - envMin) * aNorm
   const pulse = typeof globalThis.breathPulse === 'number' ? clamp01(globalThis.breathPulse) : 0.5
-  return clamp(base + params.breathSwing * (pulse - 0.5), 0.2, LED_COUNT)
+  return clamp((base + params.breathSwing * (pulse - 0.5)) * params.brightnessScale, 0.2, LED_COUNT)
 }
 
 /**

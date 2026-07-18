@@ -29,7 +29,7 @@
 | `mods/breath/mic.js` | 音声内容を保存しないマイク観測とイベント検出 |
 | `mods/breath/param-store.js` | パラメータの検証と Preference 永続化 |
 | `mods/breath/status-bar.js` | 画面上端からの下スワイプで開く時刻・バッテリー表示 |
-| `mods/breath/settings-bar.js` | 画面下端からの上スワイプで開く明るさ・音量設定 |
+| `mods/breath/settings-bar.js` | 画面下端からの上スワイプで開く全画面2層設定（音量・画面・LED・2次元感情） |
 | `mods/breath/dev/` | UDP ログ、状態取得、OTA、IP 発見などの Wi-Fi 開発機能 |
 | `mods/breath/touch-debug.js` | 未接続のタッチデバッグ用モジュール |
 
