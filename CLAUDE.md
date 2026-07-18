@@ -2,7 +2,7 @@
 
 存在負荷が高い私たちが、同じ部屋で演じなくていい時間を試す探求プロジェクト。媒体は [StackChan](https://docs.m5stack.com/ja/StackChan)（M5Stack デスクトップロボット）。
 
-Web 版の実装は git 履歴に残す。**主経路**は StackChan ファームウェアと同席観察。upstream の `stack-chan/CLAUDE.md` もファームウェア作業時に参照する。
+`stack-chan/CLAUDE.md` もファームウェア作業時に参照する。
 
 探求用 breath MOD は **ホストへのフル deploy** で焼く。MOD パーティション単体書き込みだけでは不十分なことが多い。
 
