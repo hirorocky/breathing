@@ -1,4 +1,4 @@
-import { createAppControllerApplication } from 'app-controller'
+import { type AppController, createAppControllerApplication } from 'app-controller'
 import { BreathFace } from 'breath-face'
 import { ChatStatusBar } from 'chat-status-bar'
 import { RendererCompat } from 'renderer-compat'
@@ -14,7 +14,9 @@ import { RendererCompat } from 'renderer-compat'
  * status-bar/settings-bar は mod.js 側で別途 attach されるオーバーレイなので無関係)。
  */
 
-export function createRenderer(options) {
+type RendererOptions = { displayListLength?: number }
+
+export function createRenderer(options?: RendererOptions): AppController {
   return createAppControllerApplication(
     {
       face: new BreathFace(),
@@ -26,7 +28,7 @@ export function createRenderer(options) {
 
 // Compatibility: keep class name while delegating to Face constructor
 export class Renderer extends RendererCompat {
-  constructor(options) {
+  constructor(options?: RendererOptions) {
     super({ controller: createRenderer(options) })
   }
 }

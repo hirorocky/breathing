@@ -1,7 +1,7 @@
+import { getMicStatus, onMicEvent } from 'breath/mic'
+import { deepClone, loadParams, mergeValidated, persistParams, sanitizeParams } from 'breath/param-store'
 import Time from 'time'
 import Timer from 'timer'
-import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } from 'breath/param-store'
-import { onMicEvent, getMicStatus } from 'breath/mic'
 
 /**
  * v1.2.0 (E1) — 感情 2 次元エンジン(`docs/tasks/emotion-space-scenarios.md`)。
@@ -31,8 +31,7 @@ import { onMicEvent, getMicStatus } from 'breath/mic'
 const PREF_KEY = 'emotion'
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000 // status-bar.js と同じ
 const TICK_MS = 1000
-const MS_PER_MIN = 60000
-const BURST_WINDOW_MS = 60000 // startle 連発・タッチ連発の判定窓
+const BURST_WINDOW_MS = 60_000 // startle 連発・タッチ連発の判定窓
 
 const defaults = {
   enabled: true,
@@ -57,13 +56,13 @@ const defaults = {
   gain: { min: 0.2, max: 2.0 },
   sleepy: {
     arousalThreshold: -0.6,
-    holdMs: 90000,
+    holdMs: 90_000,
     flutterOpenTopLid: 0.35,
     flutterProbPerTick: 0.025, // tick(1Hz)あたりの発火確率。平均 ~40s(20〜60s のポアソン近似)
     flutterDurationMs: 700,
   },
   poll: {
-    intervalMs: 30000, // voiceActive/silent の巡回チェック間隔(シナリオ14/15)
+    intervalMs: 30_000, // voiceActive/silent の巡回チェック間隔(シナリオ14/15)
     voiceValenceTarget: 0.3,
     voiceArousalTarget: 0.15,
     voiceNudge: 0.3, // 目標値へ引く割合(0-1)
@@ -93,11 +92,11 @@ const CLAMP_RANGES = {
   'gain.min': [0.05, 1],
   'gain.max': [1, 4],
   'sleepy.arousalThreshold': [-1, 0],
-  'sleepy.holdMs': [1000, 600000],
+  'sleepy.holdMs': [1000, 600_000],
   'sleepy.flutterOpenTopLid': [0, 1],
   'sleepy.flutterProbPerTick': [0, 1],
   'sleepy.flutterDurationMs': [100, 5000],
-  'poll.intervalMs': [1000, 300000],
+  'poll.intervalMs': [1000, 300_000],
   'poll.voiceValenceTarget': [-1, 1],
   'poll.voiceArousalTarget': [-1, 1],
   'poll.voiceNudge': [0, 1],
@@ -107,40 +106,39 @@ const CLAMP_RANGES = {
 
 let params = deepClone(defaults)
 let started = false
-let tickTimerId = null
 
 const state = { v: 0.2, a: 0 }
 
-let sleepyConditionStartTicks = null // sleepy 条件(a<threshold && v>0)が連続して true になっている開始時刻
+let sleepyConditionStartTicks: number | null = null // sleepy 条件(a<threshold && v>0)が連続して true になっている開始時刻
 let sleepy = false
 let lastIsNight = false
 let flutterUntilTicks = 0
 let nextAutoFlutterTicks = 0
 let currentTopLidValue = 0 // triggerSleepFlutter() の復帰先(直近 tick が計算した非フラッター値)
 
-const startleTimestamps = []
-const touchTimestamps = []
+const startleTimestamps: number[] = []
+const touchTimestamps: number[] = []
 
-let lastPollTicks = -Infinity
-let lastManualSetTicks = -Infinity // setEmotionState() が最後に呼ばれた ticks(bug #5 対策 — 下記参照)
+let lastPollTicks = Number.NEGATIVE_INFINITY
+let lastManualSetTicks = Number.NEGATIVE_INFINITY // setEmotionState() が最後に呼ばれた ticks(bug #5 対策 — 下記参照)
 const MANUAL_SET_GUARD_MS = 5000 // 明示的な状態セット直後は ambient poll による上書きを一時抑制する
 
-const emotionEventListeners = [] // onEmotionEvent(cb) の購読者(v1.2.0 E2 — LED の touch 演出用に最小追加)
+const emotionEventListeners: Array<(event: { type: string; t: number }) => void> = [] // onEmotionEvent(cb) の購読者(v1.2.0 E2 — LED の touch 演出用に最小追加)
 
 // シナリオ用の一時オーバーライド(dev-server の POST /emotion/scenario から使う)。
 // 実測値を偽装せず「この期間だけ条件を強制する」形にして、通常時の判定ロジックは変えない。
-let manualVoiceActiveUntilTicks = -Infinity
-let manualNightUntilTicks = -Infinity
+let manualVoiceActiveUntilTicks = Number.NEGATIVE_INFINITY
+let manualNightUntilTicks = Number.NEGATIVE_INFINITY
 let driftPerSecV = 0
-let driftUntilTicks = -Infinity
-let recoveryBoostUntilTicks = -Infinity
+let driftUntilTicks = Number.NEGATIVE_INFINITY
+let recoveryBoostUntilTicks = Number.NEGATIVE_INFINITY
 let recoveryBoostFactor = 1
 
 // ---------------------------------------------------------------------------
 // ヘルパー
 // ---------------------------------------------------------------------------
 
-function clamp(x, min, max) {
+function clamp(x: number, min: number, max: number) {
   return x < min ? min : x > max ? max : x
 }
 
@@ -149,25 +147,25 @@ function clampState() {
   state.a = clamp(state.a, -1, 1)
 }
 
-function pruneOld(list, now, windowMs) {
-  while (list.length && now - list[0] > windowMs) list.shift()
+function pruneOld(list: number[], now: number, windowMs: number) {
+  while (list.length && now - (list[0] ?? now) > windowMs) list.shift()
 }
 
-function hourJst(now) {
+function hourJst(_now: number) {
   const d = new Date(Date.now())
   // status-bar.js と同じ JST 変換(Date.now() 基準。tick の Time.ticks とは独立)。
   const jst = new Date(d.getTime() + JST_OFFSET_MS)
   return jst.getUTCHours()
 }
 
-function isNightHour(hour) {
+function isNightHour(hour: number) {
   const cfg = params.night
   if (cfg.startHour === cfg.endHour) return false
   if (cfg.startHour < cfg.endHour) return hour >= cfg.startHour && hour < cfg.endHour
   return hour >= cfg.startHour || hour < cfg.endHour // 日付をまたぐ範囲(23〜6 等)
 }
 
-function isMorningHour(hour) {
+function isMorningHour(hour: number) {
   const cfg = params.morning
   return hour >= cfg.startHour && hour < cfg.endHour
 }
@@ -176,7 +174,7 @@ function isMorningHour(hour) {
 // 派生モディファイア(getEmotion() が公開する。他モジュールはこれだけを読む)
 // ---------------------------------------------------------------------------
 
-function computeModifiers(v, a) {
+function computeModifiers(v: number, a: number) {
   const speedFactor = 1 + 0.35 * a
   const gainFactor = clamp(1 + 0.5 * a + 0.3 * v, params.gain.min, params.gain.max)
   const breathFactor = clamp(1.25 - 0.2 * a, 0.85, 1.25)
@@ -188,7 +186,7 @@ function computeModifiers(v, a) {
 // 表情への配線(globalThis ブリッジ)
 // ---------------------------------------------------------------------------
 
-function applyFaceBridge(now) {
+function applyFaceBridge(now: number) {
   const v = state.v
   const a = state.a
 
@@ -227,7 +225,10 @@ function performTick() {
     const baselineV = params.baseline.v
     const baselineA = params.baseline.a + (isMorning ? params.morning.baselineADelta : 0)
 
-    const tau = now < recoveryBoostUntilTicks ? { v: params.tau.v / recoveryBoostFactor, a: params.tau.a / recoveryBoostFactor } : params.tau
+    const tau =
+      now < recoveryBoostUntilTicks
+        ? { v: params.tau.v / recoveryBoostFactor, a: params.tau.a / recoveryBoostFactor }
+        : params.tau
 
     const decayV = 1 - Math.exp(-dtSec / Math.max(0.001, tau.v))
     const decayA = 1 - Math.exp(-dtSec / Math.max(0.001, tau.a))
@@ -258,10 +259,10 @@ function performTick() {
 
     // 寝入り中のまれな薄目(シナリオ4)。手動トリガ(triggerSleepFlutter)と同じ経路。
     if (sleepy && now >= flutterUntilTicks) {
-      if (nextAutoFlutterTicks === 0) nextAutoFlutterTicks = now + 20000 + Math.random() * 40000
+      if (nextAutoFlutterTicks === 0) nextAutoFlutterTicks = now + 20_000 + Math.random() * 40_000
       if (now >= nextAutoFlutterTicks && Math.random() < params.sleepy.flutterProbPerTick) {
         triggerSleepFlutter()
-        nextAutoFlutterTicks = now + 20000 + Math.random() * 40000
+        nextAutoFlutterTicks = now + 20_000 + Math.random() * 40_000
       }
     }
 
@@ -278,7 +279,7 @@ function performTick() {
   }
 }
 
-function pollAmbientState(now) {
+function pollAmbientState(now: number) {
   try {
     // bug #5 対策: 直前(MANUAL_SET_GUARD_MS 以内)に setEmotionState() で明示的に
     // セットされた値を、この巡回チェックが immediately 上書きしないようにする
@@ -316,7 +317,7 @@ function pollAmbientState(now) {
 // イベント入力(mic イベント購読 + タッチ)
 // ---------------------------------------------------------------------------
 
-function applyMicEventType(type, now) {
+function applyMicEventType(type: string, now: number) {
   const ev = params.events
   if (type === 'loud' || type === 'clap') {
     state.a += ev.loudArousal
@@ -350,7 +351,7 @@ function applyMicEventType(type, now) {
 // 例外を投げても他の callback・emotion 本体の処理には波及しない)。
 // ---------------------------------------------------------------------------
 
-function notifyEmotionEventListeners(event) {
+function notifyEmotionEventListeners(event: { type: string; t: number }) {
   for (const callback of emotionEventListeners) {
     try {
       callback(event)
@@ -361,15 +362,15 @@ function notifyEmotionEventListeners(event) {
 }
 
 /** callback は `(event) => {}` 形式(現時点では `{ type: 'touch', t }` のみ発火)。 */
-export function onEmotionEvent(callback) {
+export function onEmotionEvent(callback: (event: { type: string; t: number }) => void) {
   if (typeof callback !== 'function') return
   emotionEventListeners.push(callback)
 }
 
-function handleMicEvent(event) {
+function handleMicEvent(event: { type?: string }) {
   try {
-    if (!started || !params.enabled) return
-    applyMicEventType(event.type, Time.ticks)
+    if (!(started && params.enabled)) return
+    if (event.type) applyMicEventType(event.type, Time.ticks)
   } catch (error) {
     trace(`[emotion] mic event handling failed: ${error}\n`)
   }
@@ -380,7 +381,7 @@ function handleMicEvent(event) {
 // ---------------------------------------------------------------------------
 
 /** mod.js から起動 +8s で一度だけ呼ぶ。 */
-export function startEmotion(_robot) {
+export function startEmotion(_robot: unknown) {
   if (started) return
   started = true
   params = loadParams(PREF_KEY, defaults, CLAMP_RANGES)
@@ -394,7 +395,7 @@ export function startEmotion(_robot) {
   }
 
   applyFaceBridge(Time.ticks)
-  tickTimerId = Timer.repeat(performTick, TICK_MS)
+  Timer.repeat(performTick, TICK_MS)
   trace(`[emotion] started v=${state.v} a=${state.a}\n`)
 }
 
@@ -415,9 +416,7 @@ export function getEmotion() {
     // デバッグ計器(2026-07-08 脈動停止の調査): 左目の実描画矩形(eye-cozmo の
     // rect ブリッジ)と mouth 由来の呼吸位相。脈動が生きていれば dbgEye.h が
     // 1 呼吸(±10 秒)で ~68〜84px を往復し、dbgPulse が 0..1 を往復する。
-    dbgEye: globalThis.breathEyeRectL
-      ? { h: globalThis.breathEyeRectL.h, top: globalThis.breathEyeRectL.top }
-      : null,
+    dbgEye: globalThis.breathEyeRectL ? { h: globalThis.breathEyeRectL.h, top: globalThis.breathEyeRectL.top } : null,
     dbgPulse: Math.round((globalThis.breathPulse ?? -1) * 1000) / 1000,
     dbgPulseDepth: globalThis.breathPulseDepth ?? null,
   }
@@ -429,7 +428,7 @@ export function getEmotion() {
  * がこのセットを上書きしないようガードする(setEmotionState 自体は元から加算では
  * なかったが、直後の poll nudge がブレンドしたように見えていたため)。
  */
-export function setEmotionState(v, a) {
+export function setEmotionState(v: number, a: number) {
   if (typeof v === 'number' && Number.isFinite(v)) state.v = clamp(v, -1, 1)
   if (typeof a === 'number' && Number.isFinite(a)) state.a = clamp(a, -1, 1)
   lastManualSetTicks = Time.ticks
@@ -438,7 +437,7 @@ export function setEmotionState(v, a) {
 }
 
 /** 名前つきイベントの手動発火(POST /emotion/scenario 等が使う。mic 実イベントと同じ経路)。 */
-export function pushEmotionEvent(name) {
+export function pushEmotionEvent(name: string) {
   if (!started) return false
   try {
     return applyMicEventType(name, Time.ticks)
@@ -510,7 +509,7 @@ export function triggerSleepFlutter() {
 }
 
 /** シナリオ18(回復儀式)用: durationMs の間だけ tau を factor で割って回帰を加速する。 */
-export function triggerRecoveryBoost(durationMs, factor) {
+export function triggerRecoveryBoost(durationMs: number, factor: number) {
   const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 8000
   const f = typeof factor === 'number' && factor > 0 ? factor : 4
   recoveryBoostFactor = f
@@ -520,25 +519,25 @@ export function triggerRecoveryBoost(durationMs, factor) {
 }
 
 /** シナリオ14(にぎやかな部屋)用: durationMs の間、voiceActive を強制する(実測を偽装しない一時オーバーライド)。 */
-export function forceVoiceActive(durationMs) {
-  const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 30000
+export function forceVoiceActive(durationMs: number) {
+  const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 30_000
   manualVoiceActiveUntilTicks = Time.ticks + ms
   trace(`[emotion] voiceActive forced for ${ms}ms\n`)
   return true
 }
 
 /** シナリオ17(夜更け)用: durationMs の間、夜間クランプを強制する。 */
-export function forceNightMode(durationMs) {
-  const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 600000
+export function forceNightMode(durationMs: number) {
+  const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 600_000
   manualNightUntilTicks = Time.ticks + ms
   trace(`[emotion] night mode forced for ${ms}ms\n`)
   return true
 }
 
 /** シナリオ20(場の共鳴デモ)用: vPerSec の一定ドリフトを durationMs だけ加える。 */
-export function startValenceDrift(vPerSec, durationMs) {
+export function startValenceDrift(vPerSec: number, durationMs: number) {
   const rate = typeof vPerSec === 'number' ? vPerSec : 0.002
-  const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 300000
+  const ms = typeof durationMs === 'number' && durationMs > 0 ? durationMs : 300_000
   driftPerSecV = rate
   driftUntilTicks = Time.ticks + ms
   trace(`[emotion] valence drift ${rate}/s for ${ms}ms\n`)
@@ -551,7 +550,7 @@ export function getEmotionParams() {
 }
 
 /** 部分更新(PUT /emotion/params)。deep merge + 検証 + Preference 永続化。 */
-export function setEmotionParams(partial) {
+export function setEmotionParams(partial: unknown) {
   if (!partial || typeof partial !== 'object') return getEmotionParams()
   params = sanitizeParams(mergeValidated(params, partial), CLAMP_RANGES)
   persistParams(PREF_KEY, params)

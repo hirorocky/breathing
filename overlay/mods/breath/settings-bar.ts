@@ -1,10 +1,18 @@
-import { getBacklightVoltage, setBacklightVoltage } from 'm5stackchan/battery'
-import { Container, Content, Label, Skin, Style } from 'piu/MC'
-import Preference from 'preference'
-import Timer from 'timer'
 import { getEmotion, setEmotionState } from 'breath/emotion'
 import { getLedParams, setLedParams } from 'breath/led'
 import { resumeCapture, suspendCapture } from 'breath/mic'
+import { getBacklightVoltage, setBacklightVoltage } from 'm5stackchan/battery'
+import 'piu/MC'
+import type {
+  LabelDictionary,
+  Container as PiuContainer,
+  Content as PiuContent,
+  Label as PiuLabel,
+  Skin as PiuSkin,
+  Style as PiuStyle,
+} from 'piu/MC'
+import Preference from 'preference'
+import Timer from 'timer'
 
 /** 画面下端から上スワイプで開く、全画面・2層構造の設定 UI。 */
 const SETTINGS_BAR_VERSION = 2
@@ -55,11 +63,44 @@ const GRAPH_WIDTH = 236
 const GRAPH_HEIGHT = 150
 const MARKER_SIZE = 12
 
-function clamp(value, min, max) {
+type SettingName = 'volume' | 'screen' | 'led' | 'emotion'
+type PiuNode = PiuContent & { first?: PiuNode; next?: PiuNode }
+type RobotWithUi = {
+  renderer?: { application?: unknown; addDecorator(content: PiuContainer): void }
+  tone(hz: number, ms: number, volume: number): Promise<unknown> | undefined
+}
+type LedParams = { enabled?: boolean; brightnessScale?: number; coreBright?: number }
+type ButtonOptions = {
+  name?: string
+  visible?: boolean
+  skin?: PiuSkin
+  style?: PiuStyle
+  string: string
+  methodName: string
+  value?: unknown
+  left?: number
+  right?: number
+  top?: number
+  bottom?: number
+  width?: number
+  height?: number
+}
+type SelectionRowOptions = { top: number; setting: SettingName; label: string; summaryName: string }
+type BreathGlobals = typeof globalThis & {
+  amp?: { volume: number }
+  breathSettingsBarOpen?: boolean
+  breathSettingsShowCount?: number
+  breathSettingsSwipeBounds?: { x: number; y: number; width: number; height: number }
+  breathSettingsTouchCount?: number
+  breathSettingsLastDy?: number
+}
+const breathGlobal = globalThis as BreathGlobals
+
+function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
-function findNamed(content, name) {
+function findNamed(content: PiuNode | null | undefined, name: string): PiuNode | null {
   if (content?.name === name) return content
   for (let child = content?.first; child; child = child.next) {
     const found = findNamed(child, name)
@@ -68,40 +109,44 @@ function findNamed(content, name) {
   return null
 }
 
-function mvFromBrightnessLevel(level) {
+function mvFromBrightnessLevel(level: number) {
   return BRIGHTNESS_MV_BASE + level * BRIGHTNESS_MV_STEP
 }
 
-function brightnessLevelFromMv(mv) {
+function brightnessLevelFromMv(mv: number) {
   return clamp(Math.round((mv - BRIGHTNESS_MV_BASE) / BRIGHTNESS_MV_STEP), BRIGHTNESS_MIN_LEVEL, BRIGHTNESS_MAX_LEVEL)
 }
 
-function ampVolumeFromLevel(level) {
+function ampVolumeFromLevel(level: number) {
   return level * VOLUME_STEP
 }
 
-function volumeLevelFromAmpVolume(value) {
+function volumeLevelFromAmpVolume(value: number) {
   return clamp(Math.round(value / VOLUME_STEP), VOLUME_MIN_LEVEL, VOLUME_MAX_LEVEL)
 }
 
-function ledLevelFromParams(params) {
-  if (!params?.enabled) return 0
+function ledLevelFromParams(params: LedParams): number {
+  if (!params.enabled) return 0
   if (Number(params.brightnessScale) < 1) return 0.5
   const value = Number(params.coreBright)
   if (!Number.isFinite(value)) return 4
   let nearest = 1
   for (let level = 2; level <= 8; level++) {
-    if (Math.abs(LED_LEVEL_VALUES[level] - value) < Math.abs(LED_LEVEL_VALUES[nearest] - value)) nearest = level
+    const candidate = LED_LEVEL_VALUES[level]
+    const current = LED_LEVEL_VALUES[nearest]
+    if (candidate !== undefined && current !== undefined && Math.abs(candidate - value) < Math.abs(current - value))
+      nearest = level
   }
   return nearest
 }
 
 function initialBrightnessLevel() {
   const saved = Preference.get(PREF_DOMAIN, PREF_KEY_BACKLIGHT_MV)
-  if (saved != null && Number.isFinite(Number(saved))) return brightnessLevelFromMv(Number(saved))
+  if (saved !== null && saved !== undefined && Number.isFinite(Number(saved)))
+    return brightnessLevelFromMv(Number(saved))
   try {
     const mv = getBacklightVoltage()
-    if (mv != null) return brightnessLevelFromMv(mv)
+    if (mv !== null && mv !== undefined) return brightnessLevelFromMv(mv)
   } catch (error) {
     trace(`[settings-bar] getBacklightVoltage failed: ${error}\n`)
   }
@@ -110,9 +155,10 @@ function initialBrightnessLevel() {
 
 function initialVolumeLevel() {
   const saved = Preference.get(PREF_DOMAIN, PREF_KEY_AMP_VOLUME)
-  if (saved != null && Number.isFinite(Number(saved))) return volumeLevelFromAmpVolume(Number(saved))
+  if (saved !== null && saved !== undefined && Number.isFinite(Number(saved)))
+    return volumeLevelFromAmpVolume(Number(saved))
   try {
-    const value = globalThis.amp?.volume
+    const value = breathGlobal.amp?.volume
     if (typeof value === 'number') return volumeLevelFromAmpVolume(value)
   } catch (error) {
     trace(`[settings-bar] amp.volume read failed: ${error}\n`)
@@ -123,7 +169,7 @@ function initialVolumeLevel() {
 /** 保存済みの画面輝度・音量を起動時に再適用する。LED 設定は led.js 自身が復元する。 */
 export function applySavedSettings() {
   const savedMv = Preference.get(PREF_DOMAIN, PREF_KEY_BACKLIGHT_MV)
-  if (savedMv != null && Number.isFinite(Number(savedMv))) {
+  if (savedMv !== null && savedMv !== undefined && Number.isFinite(Number(savedMv))) {
     try {
       setBacklightVoltage(Number(savedMv))
     } catch (error) {
@@ -132,16 +178,18 @@ export function applySavedSettings() {
   }
 
   const savedVolume = Preference.get(PREF_DOMAIN, PREF_KEY_AMP_VOLUME)
-  if (savedVolume != null && Number.isFinite(Number(savedVolume))) {
+  if (savedVolume !== null && savedVolume !== undefined && Number.isFinite(Number(savedVolume))) {
     try {
-      globalThis.amp.volume = Number(savedVolume)
+      const amp = breathGlobal.amp
+      if (!amp) throw new Error('amplifier is unavailable')
+      amp.volume = Number(savedVolume)
     } catch (error) {
       trace(`[settings-bar] applySavedSettings volume failed: ${error}\n`)
     }
   }
 }
 
-function playBeep(robot) {
+function playBeep(robot: RobotWithUi | null) {
   if (!robot) return
   try {
     suspendCapture()
@@ -150,7 +198,8 @@ function playBeep(robot) {
   }
   try {
     const result = robot.tone(VOLUME_BEEP_HZ, VOLUME_BEEP_MS, VOLUME_BEEP_VOLUME)
-    if (result && typeof result.catch === 'function') result.catch((error) => trace(`[settings-bar] tone failed: ${error}\n`))
+    if (result && typeof result.catch === 'function')
+      result.catch((error: unknown) => trace(`[settings-bar] tone failed: ${error}\n`))
   } catch (error) {
     trace(`[settings-bar] tone failed: ${error}\n`)
   } finally {
@@ -165,7 +214,30 @@ function playBeep(robot) {
 }
 
 class SettingsBehavior extends Behavior {
-  onCreate(content, data) {
+  robot: RobotWithUi | null = null
+  open = false
+  hideTimer: ReturnType<typeof Timer.set> | null = null
+  selected: SettingName | null = null
+  brightnessLevel = BRIGHTNESS_DEFAULT_LEVEL
+  volumeLevel = VOLUME_DEFAULT_LEVEL
+  ledLevel = 0
+  valence = 0
+  arousal = 0
+  selectionLayer!: PiuContent
+  stepLayer!: PiuContent
+  emotionLayer!: PiuContent
+  detailTitle!: PiuLabel
+  detailValue!: PiuLabel
+  zeroButton!: PiuContent
+  halfButton!: PiuContent
+  emotionValue!: PiuLabel
+  emotionMarker!: PiuContent
+  volumeSummary!: PiuLabel
+  screenSummary!: PiuLabel
+  ledSummary!: PiuLabel
+  emotionSummary!: PiuLabel
+
+  override onCreate(content: PiuContainer, data: { robot?: RobotWithUi } | undefined) {
     this.robot = data?.robot ?? null
     this.open = false
     this.hideTimer = null
@@ -176,28 +248,41 @@ class SettingsBehavior extends Behavior {
     const emotion = getEmotion()
     this.valence = clamp(emotion?.v ?? 0, -1, 1)
     this.arousal = clamp(emotion?.a ?? 0, -1, 1)
-    this.selectionLayer = findNamed(content, 'selectionLayer')
-    this.stepLayer = findNamed(content, 'stepLayer')
-    this.emotionLayer = findNamed(content, 'emotionLayer')
-    this.detailTitle = findNamed(content, 'detailTitle')
-    this.detailValue = findNamed(content, 'detailValue')
-    this.zeroButton = findNamed(content, 'zeroButton')
-    this.halfButton = findNamed(content, 'halfButton')
-    this.emotionValue = findNamed(content, 'emotionValue')
-    this.emotionMarker = findNamed(content, 'emotionMarker')
-    this.volumeSummary = findNamed(content, 'volumeSummary')
-    this.screenSummary = findNamed(content, 'screenSummary')
-    this.ledSummary = findNamed(content, 'ledSummary')
-    this.emotionSummary = findNamed(content, 'emotionSummary')
-    if (!this.selectionLayer || !this.stepLayer || !this.emotionLayer || !this.detailTitle || !this.detailValue
-      || !this.zeroButton || !this.halfButton || !this.emotionValue || !this.emotionMarker || !this.volumeSummary
-      || !this.screenSummary || !this.ledSummary || !this.emotionSummary) throw new Error('settings UI element missing')
+    this.selectionLayer = findNamed(content as PiuNode, 'selectionLayer') as PiuContent
+    this.stepLayer = findNamed(content as PiuNode, 'stepLayer') as PiuContent
+    this.emotionLayer = findNamed(content as PiuNode, 'emotionLayer') as PiuContent
+    this.detailTitle = findNamed(content as PiuNode, 'detailTitle') as PiuLabel
+    this.detailValue = findNamed(content as PiuNode, 'detailValue') as PiuLabel
+    this.zeroButton = findNamed(content as PiuNode, 'zeroButton') as PiuContent
+    this.halfButton = findNamed(content as PiuNode, 'halfButton') as PiuContent
+    this.emotionValue = findNamed(content as PiuNode, 'emotionValue') as PiuLabel
+    this.emotionMarker = findNamed(content as PiuNode, 'emotionMarker') as PiuContent
+    this.volumeSummary = findNamed(content as PiuNode, 'volumeSummary') as PiuLabel
+    this.screenSummary = findNamed(content as PiuNode, 'screenSummary') as PiuLabel
+    this.ledSummary = findNamed(content as PiuNode, 'ledSummary') as PiuLabel
+    this.emotionSummary = findNamed(content as PiuNode, 'emotionSummary') as PiuLabel
+    if (
+      !this.selectionLayer ||
+      !this.stepLayer ||
+      !this.emotionLayer ||
+      !this.detailTitle ||
+      !this.detailValue ||
+      !this.zeroButton ||
+      !this.halfButton ||
+      !this.emotionValue ||
+      !this.emotionMarker ||
+      !this.volumeSummary ||
+      !this.screenSummary ||
+      !this.ledSummary ||
+      !this.emotionSummary
+    )
+      throw new Error('settings UI element missing')
     content.visible = false
     content.active = false
     this.showSelection(content)
   }
 
-  startHideTimer(content) {
+  startHideTimer(content: PiuContainer) {
     if (this.hideTimer) Timer.clear(this.hideTimer)
     this.hideTimer = Timer.set(() => this.hideBar(content), AUTO_HIDE_MS)
   }
@@ -208,46 +293,46 @@ class SettingsBehavior extends Behavior {
     this.hideTimer = null
   }
 
-  showBar(content) {
+  showBar(content: PiuContainer) {
     this.open = true
     content.visible = true
     content.active = true
     this.showSelection(content)
     this.startHideTimer(content)
-    globalThis.breathSettingsBarOpen = true
-    globalThis.breathSettingsShowCount = (globalThis.breathSettingsShowCount ?? 0) + 1
+    breathGlobal.breathSettingsBarOpen = true
+    breathGlobal.breathSettingsShowCount = (breathGlobal.breathSettingsShowCount ?? 0) + 1
     trace('[settings-bar] show\n')
     return true
   }
 
-  hideBar(content) {
+  hideBar(content: PiuContainer) {
     this.stopHideTimer()
     this.open = false
     content.active = false
     content.visible = false
-    globalThis.breathSettingsBarOpen = false
+    breathGlobal.breathSettingsBarOpen = false
     trace('[settings-bar] hide\n')
     return true
   }
 
-  showSelection(content) {
+  showSelection(content: PiuContainer) {
     this.selected = null
     this.selectionLayer.visible = true
     this.stepLayer.visible = false
     this.emotionLayer.visible = false
     this.refreshSelectionValues(content)
-    if (this.open) this.startHideTimer(content)
+    if (content.visible) this.startHideTimer(content)
     return true
   }
 
-  refreshSelectionValues(content) {
+  refreshSelectionValues(_content: PiuContainer) {
     this.volumeSummary.string = this.volumeLevel === 0 ? 'MUTE' : `${this.volumeLevel}/8`
     this.screenSummary.string = `${this.brightnessLevel}/8`
     this.ledSummary.string = this.ledLevel === 0 ? 'OFF' : `${this.ledLevel}/8`
     this.emotionSummary.string = `${this.valence.toFixed(1)}, ${this.arousal.toFixed(1)}`
   }
 
-  selectSetting(content, setting) {
+  selectSetting(content: PiuContainer, setting: SettingName) {
     this.selected = setting
     this.selectionLayer.visible = false
     if (setting === 'emotion') {
@@ -262,7 +347,7 @@ class SettingsBehavior extends Behavior {
       this.emotionLayer.visible = false
       this.detailTitle.string = setting === 'volume' ? 'VOLUME' : setting === 'screen' ? 'SCREEN' : 'LED'
       this.zeroButton.visible = setting !== 'screen'
-      this.zeroButton.coordinates = { left: 12, top: 82, width: setting === 'led' ? 43 : 92, height: 43 }
+      this.zeroButton.coordinates = { left: 12, top: 82, width: setting === 'led' ? 43 : 92, height: 43 } as never
       this.halfButton.visible = setting === 'led'
       this.updateStepDisplay()
     }
@@ -271,11 +356,17 @@ class SettingsBehavior extends Behavior {
   }
 
   updateStepDisplay() {
-    const level = this.selected === 'volume' ? this.volumeLevel : this.selected === 'screen' ? this.brightnessLevel : this.ledLevel
-    this.detailValue.string = this.selected === 'volume' && level === 0 ? 'MUTE' : this.selected === 'led' && level === 0 ? 'OFF' : `${level} / 8`
+    const level =
+      this.selected === 'volume' ? this.volumeLevel : this.selected === 'screen' ? this.brightnessLevel : this.ledLevel
+    this.detailValue.string =
+      this.selected === 'volume' && level === 0
+        ? 'MUTE'
+        : this.selected === 'led' && level === 0
+          ? 'OFF'
+          : `${level} / 8`
   }
 
-  selectLevel(content, level) {
+  selectLevel(content: PiuContainer, level: number) {
     if (this.selected === 'volume') this.setVolume(level)
     else if (this.selected === 'screen') this.setScreen(level)
     else if (this.selected === 'led') this.setLed(level)
@@ -284,12 +375,14 @@ class SettingsBehavior extends Behavior {
     return true
   }
 
-  setVolume(level) {
+  setVolume(level: number) {
     const next = clamp(level, VOLUME_MIN_LEVEL, VOLUME_MAX_LEVEL)
     if (next === this.volumeLevel) return
     const value = ampVolumeFromLevel(next)
     try {
-      globalThis.amp.volume = value
+      const amp = breathGlobal.amp
+      if (!amp) throw new Error('amplifier is unavailable')
+      amp.volume = value
       this.volumeLevel = next
       Preference.set(PREF_DOMAIN, PREF_KEY_AMP_VOLUME, String(value))
       if (next > 0) playBeep(this.robot)
@@ -298,7 +391,7 @@ class SettingsBehavior extends Behavior {
     }
   }
 
-  setScreen(level) {
+  setScreen(level: number) {
     const next = clamp(level, BRIGHTNESS_MIN_LEVEL, BRIGHTNESS_MAX_LEVEL)
     if (next === this.brightnessLevel) return
     const mv = mvFromBrightnessLevel(next)
@@ -312,20 +405,25 @@ class SettingsBehavior extends Behavior {
     }
   }
 
-  setLed(level) {
+  setLed(level: number) {
     const next = clamp(level, 0, 8)
     if (next === this.ledLevel) return
     try {
       if (next === 0) setLedParams({ enabled: false })
       else if (next === 0.5) setLedParams({ enabled: true, coreBright: LED_MIN_VALUE, brightnessScale: 0.5 })
-      else setLedParams({ enabled: true, coreBright: Math.max(LED_MIN_VALUE, LED_LEVEL_VALUES[next]), brightnessScale: 1 })
+      else
+        setLedParams({
+          enabled: true,
+          coreBright: Math.max(LED_MIN_VALUE, LED_LEVEL_VALUES[next] ?? LED_MIN_VALUE),
+          brightnessScale: 1,
+        })
       this.ledLevel = next
     } catch (error) {
       trace(`[settings-bar] LED brightness set failed: ${error}\n`)
     }
   }
 
-  setEmotionValues(content, values) {
+  setEmotionValues(content: PiuContainer, values: { v: number; a: number }) {
     this.valence = clamp(values.v, -1, 1)
     this.arousal = clamp(values.a, -1, 1)
     try {
@@ -342,36 +440,44 @@ class SettingsBehavior extends Behavior {
     this.emotionValue.string = `V ${this.valence.toFixed(1)}   A ${this.arousal.toFixed(1)}`
     const x = GRAPH_X + ((this.valence + 1) / 2) * GRAPH_WIDTH - MARKER_SIZE / 2
     const y = GRAPH_Y + ((1 - this.arousal) / 2) * GRAPH_HEIGHT - MARKER_SIZE / 2
-    this.emotionMarker.coordinates = { left: Math.round(x), top: Math.round(y), width: MARKER_SIZE, height: MARKER_SIZE }
+    this.emotionMarker.coordinates = {
+      left: Math.round(x),
+      top: Math.round(y),
+      width: MARKER_SIZE,
+      height: MARKER_SIZE,
+    } as never
   }
 }
 
-const ActionButton = Label.template(($) => ({
-  name: $.name,
-  visible: $.visible ?? true,
-  active: true,
-  backgroundTouch: true,
-  skin: $.skin ?? panelSkin,
-  style: $.style ?? valueStyle,
-  string: $.string,
-  left: $.left,
-  right: $.right,
-  top: $.top,
-  bottom: $.bottom,
-  width: $.width,
-  height: $.height,
-  Behavior: class extends Behavior {
-    onTouchBegan(content) {
-      content.skin = pressedSkin
-    }
-    onTouchEnded(content) {
-      content.skin = $.skin ?? panelSkin
-      content.bubble($.methodName, $.value)
-    }
-  },
-}))
+const ActionButton = Label.template(
+  ($: ButtonOptions) =>
+    ({
+      name: $.name,
+      visible: $.visible ?? true,
+      active: true,
+      backgroundTouch: true,
+      skin: $.skin ?? panelSkin,
+      style: $.style ?? valueStyle,
+      string: $.string,
+      left: $.left,
+      right: $.right,
+      top: $.top,
+      bottom: $.bottom,
+      width: $.width,
+      height: $.height,
+      Behavior: class extends Behavior {
+        override onTouchBegan(content: PiuLabel) {
+          content.skin = pressedSkin
+        }
+        onTouchEnded(content: PiuLabel) {
+          content.skin = $.skin ?? panelSkin
+          content.bubble($.methodName, $.value)
+        }
+      },
+    }) as LabelDictionary,
+)
 
-const SelectionRow = Container.template(($) => ({
+const SelectionRow = Container.template(($: SelectionRowOptions) => ({
   left: 12,
   right: 12,
   top: $.top,
@@ -380,10 +486,10 @@ const SelectionRow = Container.template(($) => ({
   backgroundTouch: true,
   skin: panelSkin,
   Behavior: class extends Behavior {
-    onTouchBegan(content) {
+    override onTouchBegan(content: PiuContainer) {
       content.skin = pressedSkin
     }
-    onTouchEnded(content) {
+    onTouchEnded(content: PiuContainer) {
       content.skin = panelSkin
       content.bubble('selectSetting', $.setting)
     }
@@ -403,13 +509,13 @@ const EmotionPad = Container.template(() => ({
   backgroundTouch: true,
   skin: graphSkin,
   Behavior: class extends Behavior {
-    onTouchBegan(content, _id, x, y) {
+    override onTouchBegan(content: PiuContainer, _id: number, x: number, y: number) {
       this.update(content, x, y)
     }
-    onTouchMoved(content, _id, x, y) {
+    override onTouchMoved(content: PiuContainer, _id: number, x: number, y: number) {
       this.update(content, x, y)
     }
-    update(content, x, y) {
+    update(content: PiuContainer, x: number, y: number) {
       const localX = clamp(x - content.x, 0, content.width)
       const localY = clamp(y - content.y, 0, content.height)
       content.bubble('setEmotionValues', {
@@ -437,7 +543,11 @@ const SettingsPanel = Container.template(() => ({
   Behavior: SettingsBehavior,
   contents: [
     new Container(null, {
-      name: 'selectionLayer', left: 0, right: 0, top: 0, bottom: 0,
+      name: 'selectionLayer',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
       contents: [
         new Label(null, { left: 70, right: 70, top: 2, height: 38, style: titleStyle, string: 'SETTINGS' }),
         new ActionButton({ right: 8, top: 4, width: 58, height: 34, string: 'X', methodName: 'hideBar' }),
@@ -448,33 +558,157 @@ const SettingsPanel = Container.template(() => ({
       ],
     }),
     new Container(null, {
-      name: 'stepLayer', left: 0, right: 0, top: 0, bottom: 0, visible: false,
+      name: 'stepLayer',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      visible: false,
       contents: [
         new ActionButton({ left: 8, top: 8, width: 58, height: 38, string: '<', methodName: 'showSelection' }),
-        new Label(null, { name: 'detailTitle', left: 70, right: 70, top: 8, height: 38, style: titleStyle, string: '-' }),
+        new Label(null, {
+          name: 'detailTitle',
+          left: 70,
+          right: 70,
+          top: 8,
+          height: 38,
+          style: titleStyle,
+          string: '-',
+        }),
         new ActionButton({ right: 8, top: 8, width: 58, height: 38, string: 'X', methodName: 'hideBar' }),
-        new Label(null, { name: 'detailValue', left: 80, right: 80, top: 48, height: 30, style: valueStyle, string: '-' }),
-        new ActionButton({ name: 'zeroButton', left: 12, top: 82, width: 92, height: 43, string: '0', methodName: 'selectLevel', value: 0 }),
-        new ActionButton({ name: 'halfButton', left: 61, top: 82, width: 43, height: 43, visible: false, string: '.5', methodName: 'selectLevel', value: 0.5 }),
-        new ActionButton({ left: 114, top: 82, width: 92, height: 43, string: '1', methodName: 'selectLevel', value: 1 }),
-        new ActionButton({ left: 216, top: 82, width: 92, height: 43, string: '2', methodName: 'selectLevel', value: 2 }),
-        new ActionButton({ left: 12, top: 133, width: 92, height: 43, string: '3', methodName: 'selectLevel', value: 3 }),
-        new ActionButton({ left: 114, top: 133, width: 92, height: 43, string: '4', methodName: 'selectLevel', value: 4 }),
-        new ActionButton({ left: 216, top: 133, width: 92, height: 43, string: '5', methodName: 'selectLevel', value: 5 }),
-        new ActionButton({ left: 12, top: 184, width: 92, height: 43, string: '6', methodName: 'selectLevel', value: 6 }),
-        new ActionButton({ left: 114, top: 184, width: 92, height: 43, string: '7', methodName: 'selectLevel', value: 7 }),
-        new ActionButton({ left: 216, top: 184, width: 92, height: 43, string: '8', methodName: 'selectLevel', value: 8 }),
+        new Label(null, {
+          name: 'detailValue',
+          left: 80,
+          right: 80,
+          top: 48,
+          height: 30,
+          style: valueStyle,
+          string: '-',
+        }),
+        new ActionButton({
+          name: 'zeroButton',
+          left: 12,
+          top: 82,
+          width: 92,
+          height: 43,
+          string: '0',
+          methodName: 'selectLevel',
+          value: 0,
+        }),
+        new ActionButton({
+          name: 'halfButton',
+          left: 61,
+          top: 82,
+          width: 43,
+          height: 43,
+          visible: false,
+          string: '.5',
+          methodName: 'selectLevel',
+          value: 0.5,
+        }),
+        new ActionButton({
+          left: 114,
+          top: 82,
+          width: 92,
+          height: 43,
+          string: '1',
+          methodName: 'selectLevel',
+          value: 1,
+        }),
+        new ActionButton({
+          left: 216,
+          top: 82,
+          width: 92,
+          height: 43,
+          string: '2',
+          methodName: 'selectLevel',
+          value: 2,
+        }),
+        new ActionButton({
+          left: 12,
+          top: 133,
+          width: 92,
+          height: 43,
+          string: '3',
+          methodName: 'selectLevel',
+          value: 3,
+        }),
+        new ActionButton({
+          left: 114,
+          top: 133,
+          width: 92,
+          height: 43,
+          string: '4',
+          methodName: 'selectLevel',
+          value: 4,
+        }),
+        new ActionButton({
+          left: 216,
+          top: 133,
+          width: 92,
+          height: 43,
+          string: '5',
+          methodName: 'selectLevel',
+          value: 5,
+        }),
+        new ActionButton({
+          left: 12,
+          top: 184,
+          width: 92,
+          height: 43,
+          string: '6',
+          methodName: 'selectLevel',
+          value: 6,
+        }),
+        new ActionButton({
+          left: 114,
+          top: 184,
+          width: 92,
+          height: 43,
+          string: '7',
+          methodName: 'selectLevel',
+          value: 7,
+        }),
+        new ActionButton({
+          left: 216,
+          top: 184,
+          width: 92,
+          height: 43,
+          string: '8',
+          methodName: 'selectLevel',
+          value: 8,
+        }),
       ],
     }),
     new Container(null, {
-      name: 'emotionLayer', left: 0, right: 0, top: 0, bottom: 0, visible: false,
+      name: 'emotionLayer',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      visible: false,
       contents: [
         new ActionButton({ left: 8, top: 8, width: 58, height: 38, string: '<', methodName: 'showSelection' }),
         new Label(null, { left: 70, right: 70, top: 8, height: 38, style: titleStyle, string: 'EMOTION' }),
         new ActionButton({ right: 8, top: 8, width: 58, height: 38, string: 'X', methodName: 'hideBar' }),
         new EmotionPad({}),
-        new Content(null, { name: 'emotionMarker', left: 154, top: 124, width: MARKER_SIZE, height: MARKER_SIZE, skin: markerSkin }),
-        new Label(null, { name: 'emotionValue', left: 70, right: 70, top: 208, height: 28, style: smallStyle, string: 'V 0.0   A 0.0' }),
+        new Content(null, {
+          name: 'emotionMarker',
+          left: 154,
+          top: 124,
+          width: MARKER_SIZE,
+          height: MARKER_SIZE,
+          skin: markerSkin,
+        }),
+        new Label(null, {
+          name: 'emotionValue',
+          left: 70,
+          right: 70,
+          top: 208,
+          height: 28,
+          style: smallStyle,
+          string: 'V 0.0   A 0.0',
+        }),
         new Label(null, { left: 0, width: 42, top: 115, height: 24, style: smallStyle, string: '-' }),
         new Label(null, { right: 0, width: 42, top: 115, height: 24, style: smallStyle, string: '+' }),
         new Label(null, { left: 278, width: 42, top: 47, height: 20, style: smallStyle, string: 'A+' }),
@@ -485,8 +719,9 @@ const SettingsPanel = Container.template(() => ({
   ],
 }))
 
-export function attachSettingsBar(robot) {
-  const app = robot.renderer?.application
+export function attachSettingsBar(robot: RobotWithUi) {
+  const renderer = robot.renderer
+  const app = renderer?.application
   if (!app) throw new Error('renderer application is unavailable')
 
   const panel = new SettingsPanel({ robot })
@@ -499,28 +734,34 @@ export function attachSettingsBar(robot) {
     active: true,
     backgroundTouch: true,
     Behavior: class extends Behavior {
-      onDisplaying(content) {
+      touchStartY: number | null = null
+      override onDisplaying(content: PiuContainer) {
         const bounds = content.bounds
-        globalThis.breathSettingsSwipeBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+        breathGlobal.breathSettingsSwipeBounds = {
+          x: bounds.x ?? 0,
+          y: bounds.y ?? 0,
+          width: bounds.width ?? 0,
+          height: bounds.height ?? 0,
+        }
         trace(`[settings-bar] swipe zone displaying: ${bounds.x},${bounds.y},${bounds.width},${bounds.height}\n`)
       }
-      onTouchBegan(_content, _id, _x, y) {
-        globalThis.breathSettingsTouchCount = (globalThis.breathSettingsTouchCount ?? 0) + 1
+      override onTouchBegan(_content: PiuContainer, _id: number, _x: number, y: number) {
+        breathGlobal.breathSettingsTouchCount = (breathGlobal.breathSettingsTouchCount ?? 0) + 1
         this.touchStartY = y
         trace(`[settings-bar] touch began y=${y}\n`)
       }
-      onTouchEnded(_content, _id, _x, y) {
-        if (this.touchStartY == null) return
+      onTouchEnded(_content: PiuContainer, _id: number, _x: number, y: number) {
+        if (this.touchStartY === null) return
         const dy = y - this.touchStartY
         this.touchStartY = null
-        globalThis.breathSettingsLastDy = dy
+        breathGlobal.breathSettingsLastDy = dy
         trace(`[settings-bar] touch ended y=${y} dy=${dy}\n`)
-        if (!panel.behavior.open && dy <= -MIN_SWIPE_DY) panel.delegate('showBar')
+        if (!(panel.behavior as SettingsBehavior).open && dy <= -MIN_SWIPE_DY) panel.delegate('showBar')
       }
     },
   }))
 
-  robot.renderer.addDecorator(new BottomSwipeZone({}))
-  robot.renderer.addDecorator(panel)
+  renderer.addDecorator(new BottomSwipeZone({}))
+  renderer.addDecorator(panel)
   trace(`[settings-bar] attached v${SETTINGS_BAR_VERSION}\n`)
 }

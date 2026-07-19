@@ -1,11 +1,12 @@
+import { playCry } from 'breath/cry'
+import { getEmotion } from 'breath/emotion'
+import { deferGaze } from 'breath/liveliness'
+import { onMicEvent } from 'breath/mic'
+import { deepClone, loadParams, mergeValidated, persistParams, sanitizeParams } from 'breath/param-store'
+import { triggerRecoil } from 'breath/posture'
+import type { GazeRobot, MicEvent } from 'breath/types'
 import Time from 'time'
 import Timer from 'timer'
-import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } from 'breath/param-store'
-import { onMicEvent } from 'breath/mic'
-import { playCry } from 'breath/cry'
-import { deferGaze } from 'breath/liveliness'
-import { getEmotion } from 'breath/emotion'
-import { triggerRecoil } from 'breath/posture'
 
 /**
  * v1.1.0 Phase 3c #1 — 総合表現「startle + 方向つき一瞥」
@@ -60,33 +61,33 @@ const defaults = {
 // delayMs/holdMs/invert は範囲チェック対象外(liveliness.js の settleMs と同じ扱い —
 // mergeValidated が型・配列長だけ検証する)。
 const CLAMP_RANGES = {
-  'startle.refractoryMs': [1000, 120000],
+  'startle.refractoryMs': [1000, 120_000],
   'startle.cryProb': [0, 1],
   'glance.sideY': [0, 1],
   'glance.lagSideMin': [0, 400],
 }
 
 let params = deepClone(defaults)
-let robotRef = null
+let robotRef: GazeRobot | null = null
 let started = false
 
 let reactionInProgress = false // delay タイマー〜hold タイマーの間 true(再入防止)
-let lastReactionTicks = -Infinity // 不応期の基準点(自動発火のみが更新。手動トリガも更新する)
+let lastReactionTicks = Number.NEGATIVE_INFINITY // 不応期の基準点(自動発火のみが更新。手動トリガも更新する)
 
-let glanceTimerId = null
-let holdTimerId = null
+let glanceTimerId: ReturnType<typeof Timer.set> | null = null
+let holdTimerId: ReturnType<typeof Timer.set> | null = null
 
 // ---------------------------------------------------------------------------
 // ヘルパー
 // ---------------------------------------------------------------------------
 
-function formatDir(dir) {
+function formatDir(dir: number) {
   if (dir > 0) return `+${dir}`
   return `${dir}`
 }
 
-function randomInRange(range) {
-  const [min, max] = range
+function randomInRange(range: readonly number[]) {
+  const [min = 0, max = min] = range
   return min + Math.random() * Math.max(0, max - min)
 }
 
@@ -96,7 +97,7 @@ function randomInRange(range) {
  * 状態)は gainFactor が自然に下がるため、cry 確率・glance 振幅は特別分岐なしで
  * 自然に小さくなる(getEmotion() の式そのものが萎縮を表現している)。
  */
-function emotionModifiers() {
+function emotionModifiers(): { gainFactor?: number; recoveryFactor?: number } {
   try {
     return getEmotion()?.modifiers ?? {}
   } catch (error) {
@@ -106,11 +107,11 @@ function emotionModifiers() {
 }
 
 function clearReactionTimers() {
-  if (glanceTimerId != null) {
+  if (glanceTimerId !== null) {
     Timer.clear(glanceTimerId)
     glanceTimerId = null
   }
-  if (holdTimerId != null) {
+  if (holdTimerId !== null) {
     Timer.clear(holdTimerId)
     holdTimerId = null
   }
@@ -122,7 +123,7 @@ function clearReactionTimers() {
  * `invert` が true なら符号を反転する(方向決定自体の一部。以後 trace・glance の
  * 両方でこの反転済み dir を使う)。
  */
-function computeDirection(event) {
+function computeDirection(event: MicEvent) {
   const lagX100 = typeof event.lagX100 === 'number' ? event.lagX100 : null
   let dir = 0
   if (lagX100 !== null) {
@@ -147,7 +148,7 @@ function returnToCenter() {
   trace('[react] return to center\n')
 }
 
-function performGlance(dir, willCry, holdMs, ampScale) {
+function performGlance(dir: number, willCry: boolean, holdMs: number, ampScale: number) {
   try {
     triggerRecoil()
   } catch (error) {
@@ -182,7 +183,7 @@ function performGlance(dir, willCry, holdMs, ampScale) {
  * 実際の反応を仕掛ける。呼び出し前提: reactionInProgress チェック済み
  * (自動発火は不応期チェックも済み)。`lagX100` は trace 用(手動トリガでは null)。
  */
-function runReaction(dir, lagX100, now) {
+function runReaction(dir: number, lagX100: number | null, now: number) {
   const mod = emotionModifiers()
   const gainFactor = typeof mod.gainFactor === 'number' ? mod.gainFactor : 1
   const recoveryFactor = typeof mod.recoveryFactor === 'number' ? mod.recoveryFactor : 1
@@ -207,14 +208,16 @@ function runReaction(dir, lagX100, now) {
     performGlance(dir, willCry, holdMs, ampScale)
   }, delayMs)
 
-  trace(`[react] startle dir=${formatDir(dir)} lagX100=${lagX100 ?? 'none'} delay=${delayMs} hold=${holdMs} cry=${willCry ? 'yes' : 'no'} gain=${gainFactor.toFixed(2)} recovery=${recoveryFactor.toFixed(2)}\n`)
+  trace(
+    `[react] startle dir=${formatDir(dir)} lagX100=${lagX100 ?? 'none'} delay=${delayMs} hold=${holdMs} cry=${willCry ? 'yes' : 'no'} gain=${gainFactor.toFixed(2)} recovery=${recoveryFactor.toFixed(2)}\n`,
+  )
 }
 
-function handleMicEvent(event) {
+function handleMicEvent(event: MicEvent) {
   try {
-    if (!started || !robotRef) return
+    if (!(started && robotRef)) return
     if (!params.enabled) return
-    if ('clap' !== event.type && 'loud' !== event.type) return
+    if (event.type !== 'clap' && event.type !== 'loud') return
     if (reactionInProgress) return
 
     const now = Time.ticks
@@ -232,7 +235,7 @@ function handleMicEvent(event) {
 // ---------------------------------------------------------------------------
 
 /** mod.js から起動 +7s で一度だけ呼ぶ。 */
-export function startReactions(robot) {
+export function startReactions(robot: GazeRobot) {
   if (started) return
   started = true
   robotRef = robot
@@ -253,7 +256,7 @@ export function getReactParams() {
 }
 
 /** 部分更新(PUT /react/params)。deep merge + 検証 + Preference 永続化 + 即時反映。 */
-export function setReactParams(partial) {
+export function setReactParams(partial: unknown) {
   if (!partial || typeof partial !== 'object') return getReactParams()
   params = sanitizeParams(mergeValidated(params, partial), CLAMP_RANGES)
   persistParams(PREF_KEY, params)
@@ -266,14 +269,14 @@ export function setReactParams(partial) {
  * なければランダムに選ぶ。不応期は無視するが、反応進行中(`reactionInProgress`)
  * なら false を返して何もしない(進行中の反応を壊さない)。
  */
-export function triggerStartle(dir) {
-  if (!started || !robotRef) return false
+export function triggerStartle(dir: number | null) {
+  if (!(started && robotRef)) return false
   if (reactionInProgress) {
     trace('[react] triggerStartle ignored: reaction in progress\n')
     return false
   }
   let resolvedDir = dir
-  if (-1 !== resolvedDir && 0 !== resolvedDir && 1 !== resolvedDir) {
+  if (resolvedDir !== -1 && resolvedDir !== 0 && resolvedDir !== 1) {
     resolvedDir = Math.floor(Math.random() * 3) - 1
   }
   try {

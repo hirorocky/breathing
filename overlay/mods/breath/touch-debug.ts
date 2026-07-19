@@ -1,4 +1,5 @@
-import { Container, Label, Skin, Style } from 'piu/MC'
+import 'piu/MC'
+import type { Container as PiuContainer, Label as PiuLabel } from 'piu/MC'
 import Timer from 'timer'
 
 /** タッチ座標・状態のデバッグ表示（v1.0.1 調査用） */
@@ -9,26 +10,34 @@ const BAR_HEIGHT = 56
 const barSkin = new Skin({ fill: '#222222' })
 const textStyle = new Style({ font: 'k8x12-12', color: '#ffffff' })
 
-const touchHandlers = {
+type TouchPayload = { x: number; y: number; source: 'piu' }
+type TouchHandler = (payload: TouchPayload) => void
+type TouchPhase = 'Began' | 'Moved' | 'Ended'
+type TouchState = { phase: string; x: number | string; y: number | string; swipe: string; appSize: string }
+type RobotWithRenderer = {
+  renderer?: { application?: { width?: number; height?: number }; addDecorator(content: PiuContainer): void }
+}
+
+const touchHandlers: Record<`on${TouchPhase}`, TouchHandler[]> = {
   onBegan: [],
   onMoved: [],
   onEnded: [],
 }
 
-export function onTouchBegan(handler) {
+export function onTouchBegan(handler: TouchHandler) {
   touchHandlers.onBegan.push(handler)
 }
 
-export function onTouchMoved(handler) {
+export function onTouchMoved(handler: TouchHandler) {
   touchHandlers.onMoved.push(handler)
 }
 
-export function onTouchEnded(handler) {
+export function onTouchEnded(handler: TouchHandler) {
   touchHandlers.onEnded.push(handler)
 }
 
-function dispatch(phase, x, y) {
-  const payload = { x, y, source: 'piu' }
+function dispatch(phase: TouchPhase, x: number, y: number) {
+  const payload: TouchPayload = { x, y, source: 'piu' }
   for (const handler of touchHandlers[`on${phase}`]) {
     try {
       handler(payload)
@@ -39,24 +48,27 @@ function dispatch(phase, x, y) {
 }
 
 class TouchDebugBehavior extends Behavior {
-  onCreate(content, data) {
+  state!: TouchState
+  labels: PiuLabel[] = []
+
+  override onCreate(_content: PiuContainer, data: { state: TouchState }) {
     this.state = data.state
     this.labels = []
   }
 
-  onDisplaying(content) {
+  override onDisplaying(content: PiuContainer) {
     for (let label = content.first; label; label = label.next) {
-      this.labels.push(label)
+      this.labels.push(label as PiuLabel)
     }
     this.refresh(content)
   }
 
-  setLine(index, text) {
+  setLine(index: number, text: string) {
     const label = this.labels[index]
     if (label) label.string = text
   }
 
-  refresh(content) {
+  refresh(_content: PiuContainer) {
     const { phase, x, y, swipe, appSize } = this.state
     this.setLine(0, `TOUCH ${phase} x=${x} y=${y}`)
     this.setLine(1, `top<=${TOP_ZONE_Y} ${swipe}`)
@@ -64,12 +76,12 @@ class TouchDebugBehavior extends Behavior {
     this.setLine(3, 'breath mod active')
   }
 
-  updateSwipe(content, text) {
+  updateSwipe(content: PiuContainer, text: string) {
     this.state.swipe = text
     this.refresh(content)
   }
 
-  onTouchBegan(content, _id, x, y) {
+  override onTouchBegan(content: PiuContainer, _id: number, x: number, y: number) {
     trace(`[touch-debug] PIU began x=${x} y=${y}\n`)
     this.state.phase = 'DOWN'
     this.state.x = x
@@ -78,7 +90,7 @@ class TouchDebugBehavior extends Behavior {
     dispatch('Began', x, y)
   }
 
-  onTouchMoved(content, _id, x, y) {
+  override onTouchMoved(content: PiuContainer, _id: number, x: number, y: number) {
     this.state.phase = 'MOVE'
     this.state.x = x
     this.state.y = y
@@ -86,7 +98,7 @@ class TouchDebugBehavior extends Behavior {
     dispatch('Moved', x, y)
   }
 
-  onTouchEnded(content, _id, x, y) {
+  onTouchEnded(content: PiuContainer, _id: number, x: number, y: number) {
     trace(`[touch-debug] PIU ended x=${x} y=${y}\n`)
     this.state.phase = 'UP'
     this.state.x = x
@@ -96,7 +108,7 @@ class TouchDebugBehavior extends Behavior {
   }
 }
 
-const TouchDebugPanel = Container.template(($) => ({
+const TouchDebugPanel = Container.template(($: { state: TouchState }) => ({
   name: 'touch-debug',
   left: 0,
   right: 0,
@@ -113,8 +125,8 @@ const TouchDebugPanel = Container.template(($) => ({
   ],
 }))
 
-function hookSwipeDebug(panel, state) {
-  let touchStart = null
+function hookSwipeDebug(panel: PiuContainer, _state: TouchState) {
+  let touchStart: { x: number; y: number } | null = null
   onTouchBegan(({ x, y }) => {
     touchStart = { x, y }
     panel.delegate?.('updateSwipe', `start (${x},${y}) top=${y <= TOP_ZONE_Y}`)
@@ -122,10 +134,7 @@ function hookSwipeDebug(panel, state) {
   onTouchMoved(({ x, y }) => {
     if (!touchStart) return
     const dy = y - touchStart.y
-    panel.delegate?.(
-      'updateSwipe',
-      `dy=${dy} (${touchStart.x},${touchStart.y})->(${x},${y})`,
-    )
+    panel.delegate?.('updateSwipe', `dy=${dy} (${touchStart.x},${touchStart.y})->(${x},${y})`)
   })
   onTouchEnded(({ x, y }) => {
     if (!touchStart) {
@@ -138,7 +147,7 @@ function hookSwipeDebug(panel, state) {
   })
 }
 
-export function attachTouchDebug(robot) {
+export function attachTouchDebug(robot: RobotWithRenderer) {
   const app = robot.renderer?.application
   const state = {
     phase: 'idle',
@@ -150,7 +159,7 @@ export function attachTouchDebug(robot) {
 
   Timer.set(() => {
     try {
-      const panel = new TouchDebugPanel({}, { state })
+      const panel = new TouchDebugPanel({ state })
       robot.renderer?.addDecorator(panel)
       hookSwipeDebug(panel, state)
       trace('[touch-debug] PIU panel attached\n')

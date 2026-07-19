@@ -1,7 +1,57 @@
+import type { ClampRanges } from 'breath/param-store'
+import { deepClone, loadParams, mergeValidated, persistParams, sanitizeParams } from 'breath/param-store'
+import { Socket } from 'socket'
 import Time from 'time'
 import Timer from 'timer'
-import { Socket } from 'socket'
-import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } from 'breath/param-store'
+
+interface AudioInLike {
+  readonly channels?: number
+  readonly sampleRate?: number
+  level?(buffer: ArrayBuffer): number
+  read(byteLength: number): ArrayBuffer | undefined
+}
+
+interface MicrophoneLike {
+  onReadable?: (this: AudioInLike, byteLength: number) => void
+  start(): void
+  stop(): void
+}
+
+interface RobotWithMicrophone {
+  microphone?: MicrophoneLike
+}
+
+interface UdpSocket {
+  write(host: string, port: number, data: ArrayBuffer): void
+}
+
+type UdpSocketConstructor = new (options: { kind: 'UDP' }) => UdpSocket
+type MicEventType = 'loud' | 'clap' | 'voice' | 'silence'
+
+interface MicWindow {
+  t: number
+  rms: number
+  peak: number
+}
+
+interface DirectionEstimate {
+  t: number
+  lag: number
+  lagX100: number
+  corrPeakRatio: number
+  l0: number
+  l1: number
+}
+
+interface MicEvent extends MicWindow {
+  type: MicEventType
+  lag?: number
+  lagX100?: number
+  l0?: number
+  l1?: number
+}
+
+type MicEventListener = (event: MicEvent) => void
 
 /**
  * v1.1.0 Phase 3a — マイク観測基盤(レベルのみ)。
@@ -126,7 +176,7 @@ const defaults = {
 }
 
 // path (e.g. 'stream.intervalMs') -> [min, max]。setMicParams / 復元時の安全クランプ。
-const CLAMP_RANGES = {
+const CLAMP_RANGES: ClampRanges = {
   'stream.intervalMs': [20, 5000],
   'loud.peakMin': [200, 32767],
   'loud.refractoryMs': [100, 10000],
@@ -144,9 +194,9 @@ let params = deepClone(defaults)
 let started = false
 let running = false
 let suspended = false // cry.js の再生中は true(suspendCapture〜resumeCapture の間)
-let micRef = null
-let socket = null
-let streamTimerId = null
+let micRef: MicrophoneLike | null = null
+let socket: UdpSocket | null = null
+let streamTimerId: ReturnType<typeof Timer.repeat> | null = null
 
 let zeroStreak = 0
 let lastZeroRestartTicks = -Infinity
@@ -162,12 +212,12 @@ let lastZeroRestartTicks = -Infinity
 const POST_RESTART_MUTE_MS = 400
 let muteEventsUntilTicks = -Infinity
 
-function armPostRestartMute(now) {
+function armPostRestartMute(now: number): void {
   muteEventsUntilTicks = now + POST_RESTART_MUTE_MS
 }
 
-let lastWindow = { t: 0, rms: 0, peak: 0 }
-const ring = []
+let lastWindow: MicWindow = { t: 0, rms: 0, peak: 0 }
+const ring: MicWindow[] = []
 
 let windowStartTicks = 0
 let windowLevelWeightedSum = 0
@@ -176,7 +226,7 @@ let windowPeak = 0
 let windowProcMsSum = 0
 let windowProcCount = 0
 
-let avgProcUsEma = null
+let avgProcUsEma: number | null = null
 
 // v1.1.0 Phase 3b — イベント検出(loud/clap/voice/silence)の状態。反応(顔・音)は
 // 一切つながない — trace・リングバッファ・UDP ストリームで観測できるだけ。
@@ -187,14 +237,14 @@ let voiceGapStreak = 0
 let lastVoiceTicks = -Infinity
 let silentState = false
 let lastNonQuietTicks = 0
-let pendingStreamEvent = null // 次の UDP ストリームパケットに一度だけ乗せる ev フィールド
-let pendingStreamEventLag = null // 同上。lagX100(サブサンプル補間ラグ × 100。推定があった場合のみ)
-const eventRing = []
-const micEventListeners = []
+let pendingStreamEvent: MicEventType | null = null // 次の UDP ストリームパケットに一度だけ乗せる ev フィールド
+let pendingStreamEventLag: number | null = null // 同上。lagX100(サブサンプル補間ラグ × 100。推定があった場合のみ)
+const eventRing: MicEvent[] = []
+const micEventListeners: MicEventListener[] = []
 
 // v1.1.0 Phase 3b+ — 方向推定(TDOA + ILD)の状態。反応は一切つながない。
-let micChannels = null // AudioIn.channels をキャッシュ(2 でなければ推定を実行しない)
-let lastDirEstimate = null // { t, lag, corrPeakRatio, l0, l1 }
+let micChannels: number | null = null // AudioIn.channels をキャッシュ(2 でなければ推定を実行しない)
+let lastDirEstimate: DirectionEstimate | null = null
 let lastDirEstimateTicks = -Infinity
 let lastDirComputeTicks = -Infinity // loud.refractoryMs と同様のゲート(毎チャンク計算しない)
 
@@ -212,7 +262,7 @@ let peakChannelStride = PEAK_CHANNEL_STRIDE
 // ヘルパー
 // ---------------------------------------------------------------------------
 
-function resetWindowAccumulators(now) {
+function resetWindowAccumulators(now: number): void {
   windowStartTicks = now
   windowLevelWeightedSum = 0
   windowSampleCount = 0
@@ -221,7 +271,7 @@ function resetWindowAccumulators(now) {
   windowProcCount = 0
 }
 
-function pushRing(entry) {
+function pushRing(entry: MicWindow): void {
   ring.push(entry)
   if (ring.length > RING_CAPACITY) ring.shift()
 }
@@ -234,7 +284,7 @@ function pushRing(entry) {
  * no-op)。`sampleRate` プロパティが無い実装では 16000 とみなし
  * rateFactor=1 にフォールバックする(trace で警告)。
  */
-function ensureRateFactor(audioIn) {
+function ensureRateFactor(audioIn: AudioInLike): void {
   if (rateFactorReady) return
   rateFactorReady = true
 
@@ -254,11 +304,11 @@ function ensureRateFactor(audioIn) {
   trace(`[mic] capture started (${sampleRate}Hz x ${channels}ch)\n`)
 }
 
-function computeLevelFallback(samples, sampleCount) {
+function computeLevelFallback(samples: Int16Array, sampleCount: number): number {
   let sum = 0
   let counted = 0
   for (let i = 0; i < sampleCount; i += LEVEL_FALLBACK_STRIDE) {
-    const v = samples[i]
+    const v = samples[i] ?? 0
     sum += v < 0 ? -v : v
     counted++
   }
@@ -277,15 +327,15 @@ function computeLevelFallback(samples, sampleCount) {
  * スケールしたもの(v1.2.0、`ensureRateFactor` 参照) — 高レートでも走査点数
  * (=CPU コスト)を一定に保つ。
  */
-function computePeak(samples, sampleCount) {
+function computePeak(samples: Int16Array, sampleCount: number): number {
   let peak = 0
   for (let i = 0; i < sampleCount; i += peakChannelStride) {
-    const v = samples[i]
+    const v = samples[i] ?? 0
     const abs = v < 0 ? -v : v
     if (abs > peak) peak = abs
   }
   for (let i = 1; i < sampleCount; i += peakChannelStride) {
-    const v = samples[i]
+    const v = samples[i] ?? 0
     const abs = v < 0 ? -v : v
     if (abs > peak) peak = abs
   }
@@ -303,23 +353,23 @@ function computePeak(samples, sampleCount) {
  * しか無く、ピーク自体は反射音の重なりで数 ms 遅れて立つことがあるため、
  * ピークではなくオンセットに窓を合わせる。
  */
-function findOnsetFrameIndex(samples, frameCount) {
+function findOnsetFrameIndex(samples: Int16Array, frameCount: number): number {
   let peak = 0
   for (let n = 0; n < frameCount; n++) {
-    const base = n << 1
-    let v0 = samples[base]
+    const base = n * 2
+    let v0 = samples[base] ?? 0
     if (v0 < 0) v0 = -v0
-    let v1 = samples[base + 1]
+    let v1 = samples[base + 1] ?? 0
     if (v1 < 0) v1 = -v1
     const m = v0 > v1 ? v0 : v1
     if (m > peak) peak = m
   }
-  const threshold = peak >> 1
+  const threshold = Math.floor(peak / 2)
   for (let n = 0; n < frameCount; n++) {
-    const base = n << 1
-    let v0 = samples[base]
+    const base = n * 2
+    let v0 = samples[base] ?? 0
     if (v0 < 0) v0 = -v0
-    let v1 = samples[base + 1]
+    let v1 = samples[base + 1] ?? 0
     if (v1 < 0) v1 = -v1
     if ((v0 > v1 ? v0 : v1) >= threshold) return n
   }
@@ -348,7 +398,12 @@ function findOnsetFrameIndex(samples, frameCount) {
  * 実行時レートに関わらず不変に保つため。診断用に corr の並びを trace する。
  * ウィンドウが小さすぎる(チャンク境界付近)場合は null を返す。
  */
-function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
+function computeDirectionEstimate(
+  samples: Int16Array,
+  frameCount: number,
+  onsetFrameIdx: number,
+  now: number,
+): DirectionEstimate | null {
   const maxLag = params.direction.maxLag // 16kHz 換算(v1.2.0 で再定義)
   const effectiveMaxLag = Math.max(1, Math.round(maxLag * rateFactor)) // 実レート換算の探索範囲
 
@@ -369,7 +424,7 @@ function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
     for (let n = winStart; n < winEnd; n += stride) {
       const m = n + lag
       if (m < 0 || m >= frameCount) continue
-      corr += samples[n << 1] * samples[(m << 1) + 1]
+      corr += (samples[n * 2] ?? 0) * (samples[m * 2 + 1] ?? 0)
     }
     if (0 === lag) zeroLagCorr = corr
     if (corr > coarseBestCorr) {
@@ -396,7 +451,7 @@ function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
     for (let n = winStart; n < winEnd; n++) {
       const m = n + lag
       if (m < 0 || m >= frameCount) continue
-      corr += samples[n << 1] * samples[(m << 1) + 1]
+      corr += (samples[n * 2] ?? 0) * (samples[m * 2 + 1] ?? 0)
     }
     if (0 === lag) zeroLagCorr = corr // 密探索の方が精密なので優先して上書き
     if (bestWasPrev) {
@@ -433,9 +488,9 @@ function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
   let sumAbs0 = 0
   let sumAbs1 = 0
   for (let n = winStart; n < winEnd; n++) {
-    let v0 = samples[n << 1]
+    let v0 = samples[n * 2] ?? 0
     if (v0 < 0) v0 = -v0
-    let v1 = samples[(n << 1) + 1]
+    let v1 = samples[n * 2 + 1] ?? 0
     if (v1 < 0) v1 = -v1
     sumAbs0 += v0
     sumAbs1 += v1
@@ -445,7 +500,9 @@ function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
   const l1 = windowCount > 0 ? Math.round(sumAbs1 / windowCount) : 0
   const corrPeakRatio = zeroLagCorr > 0 ? Math.round((bestCorr / zeroLagCorr) * 100) / 100 : 0
 
-  trace(`[mic] dir corr(k)=[${corrTrace}] win=${winStart}..${winEnd} fine=${fineLo}..${fineHi} coarseLag=${coarseBestLag} stride=${stride}\n`)
+  trace(
+    `[mic] dir corr(k)=[${corrTrace}] win=${winStart}..${winEnd} fine=${fineLo}..${fineHi} coarseLag=${coarseBestLag} stride=${stride}\n`,
+  )
   return { t: now, lag, lagX100, corrPeakRatio, l0, l1 }
 }
 
@@ -455,7 +512,12 @@ function computeDirectionEstimate(samples, frameCount, onsetFrameIdx, now) {
  * CPU ゼロ)。全体を try/catch で包み、失敗しても loud/clap イベント自体は
  * 通常どおり発火する(呼び出し側の accumulateChunk には影響しない)。
  */
-function maybeEstimateDirection(audioIn, samples, sampleCount, peakValue) {
+function maybeEstimateDirection(
+  audioIn: AudioInLike,
+  samples: Int16Array,
+  sampleCount: number,
+  peakValue: number,
+): void {
   try {
     if (!params.direction.enabled) return
     if (peakValue < params.loud.peakMin) return
@@ -469,7 +531,7 @@ function maybeEstimateDirection(audioIn, samples, sampleCount, peakValue) {
     if (now - lastDirComputeTicks < params.loud.refractoryMs) return
     lastDirComputeTicks = now
 
-    const frameCount = sampleCount >> 1
+    const frameCount = Math.floor(sampleCount / 2)
     if (frameCount < 2) return
 
     const startTicks = Time.ticks
@@ -480,21 +542,24 @@ function maybeEstimateDirection(audioIn, samples, sampleCount, peakValue) {
     if (estimate) {
       lastDirEstimate = estimate
       lastDirEstimateTicks = now
-      trace(`[mic] direction estimate lag=${estimate.lag} lagX100=${estimate.lagX100} l0=${estimate.l0} l1=${estimate.l1} ratio=${estimate.corrPeakRatio} tookMs=${elapsedMs}\n`)
+      trace(
+        `[mic] direction estimate lag=${estimate.lag} lagX100=${estimate.lagX100} l0=${estimate.l0} l1=${estimate.l1} ratio=${estimate.corrPeakRatio} tookMs=${elapsedMs}\n`,
+      )
     }
   } catch (error) {
     trace(`[mic] direction estimate failed: ${error}\n`)
   }
 }
 
-function accumulateChunk(audioIn, buffer) {
+function accumulateChunk(audioIn: AudioInLike, buffer: ArrayBuffer): void {
   ensureRateFactor(audioIn)
 
-  const sampleCount = buffer.byteLength >> 1
+  const sampleCount = Math.floor(buffer.byteLength / 2)
   if (sampleCount <= 0) return
 
   const samples = new Int16Array(buffer)
-  const levelValue = typeof audioIn.level === 'function' ? audioIn.level(buffer) : computeLevelFallback(samples, sampleCount)
+  const levelValue =
+    typeof audioIn.level === 'function' ? audioIn.level(buffer) : computeLevelFallback(samples, sampleCount)
   const peakValue = computePeak(samples, sampleCount)
 
   windowLevelWeightedSum += levelValue * sampleCount
@@ -509,12 +574,12 @@ function accumulateChunk(audioIn, buffer) {
 // 算術のみ(ループ・アロケーション追加なし)。反応は一切つながない。
 // ---------------------------------------------------------------------------
 
-function pushEventRing(event) {
+function pushEventRing(event: MicEvent): void {
   eventRing.push(event)
   if (eventRing.length > EVENT_RING_CAPACITY) eventRing.shift()
 }
 
-function notifyMicEventListeners(event) {
+function notifyMicEventListeners(event: MicEvent): void {
   for (const callback of micEventListeners) {
     try {
       callback(event)
@@ -529,7 +594,7 @@ function notifyMicEventListeners(event) {
  * `lag`/`l0`/`l1` をイベントに添付する(v1.1.0 Phase 3b+。voice/silence には
  * 添付しない — 方向推定は loud 候補チャンクでのみ計算されるため)。
  */
-function attachDirection(event, now) {
+function attachDirection(event: MicEvent, now: number): void {
   if ('loud' !== event.type && 'clap' !== event.type) return
   if (!lastDirEstimate) return
   if (now - lastDirEstimateTicks > DIR_ESTIMATE_MAX_AGE_MS) return
@@ -539,13 +604,14 @@ function attachDirection(event, now) {
   event.l1 = lastDirEstimate.l1
 }
 
-function emitMicEvent(now, type, rms, peak) {
-  const event = { t: now, type, rms, peak }
+function emitMicEvent(now: number, type: MicEventType, rms: number, peak: number): MicEvent {
+  const event: MicEvent = { t: now, type, rms, peak }
   attachDirection(event, now)
   pushEventRing(event)
   pendingStreamEvent = type // 次の sendStreamPacket にだけ ev フィールドを乗せる
   pendingStreamEventLag = 'number' === typeof event.lagX100 ? event.lagX100 : null
-  const dirPart = 'number' === typeof event.lag ? ` lag=${event.lag} lagX100=${event.lagX100} l0=${event.l0} l1=${event.l1}` : ''
+  const dirPart =
+    'number' === typeof event.lag ? ` lag=${event.lag} lagX100=${event.lagX100} l0=${event.l0} l1=${event.l1}` : ''
   trace(`[mic] event ${type} peak=${peak} rms=${rms}${dirPart}\n`)
   notifyMicEventListeners(event)
   return event
@@ -556,8 +622,8 @@ function emitMicEvent(now, type, rms, peak) {
  * 条件上重ならない — voice は peak < loud.peakMin が前提、silence は
  * 非静音判定が先に走るため同一窓では発火しない)。
  */
-function detectEvents(now, rms, peak) {
-  let firedType = null
+function detectEvents(now: number, rms: number, peak: number): MicEventType | null {
+  let firedType: MicEventType | null = null
 
   // --- loud / clap(同じ refractory を共有する「loud 系イベント」)---
   if (peak >= params.loud.peakMin && now - lastLoudEventTicks >= params.loud.refractoryMs) {
@@ -616,7 +682,7 @@ function detectEvents(now, rms, peak) {
   return firedType
 }
 
-function closeWindow(now) {
+function closeWindow(now: number): void {
   const rms = windowSampleCount > 0 ? Math.round(windowLevelWeightedSum / windowSampleCount) : 0
   const peak = windowPeak
   lastWindow = { t: now, rms, peak }
@@ -624,7 +690,8 @@ function closeWindow(now) {
 
   if (windowProcCount > 0) {
     const avgUsThisWindow = (windowProcMsSum / windowProcCount) * 1000
-    avgProcUsEma = avgProcUsEma == null ? avgUsThisWindow : avgProcUsEma + PROC_US_EMA_ALPHA * (avgUsThisWindow - avgProcUsEma)
+    avgProcUsEma =
+      avgProcUsEma === null ? avgUsThisWindow : avgProcUsEma + PROC_US_EMA_ALPHA * (avgUsThisWindow - avgProcUsEma)
   }
 
   if (now >= muteEventsUntilTicks) detectEvents(now, rms, peak)
@@ -640,11 +707,11 @@ function closeWindow(now) {
 // closeWindow 自体が呼ばれない。ここでのリセットは保険)
 // ---------------------------------------------------------------------------
 
-function resetZeroStallCounter() {
+function resetZeroStallCounter(): void {
   zeroStreak = 0
 }
 
-function checkZeroStall(now) {
+function checkZeroStall(now: number): void {
   if (suspended || !running) {
     zeroStreak = 0
     return
@@ -662,7 +729,7 @@ function checkZeroStall(now) {
   restartCaptureForZeroStall(now)
 }
 
-function restartCaptureForZeroStall(now) {
+function restartCaptureForZeroStall(now: number): void {
   trace('[mic] zero-stall detected, restarting capture\n')
   if (!micRef) return
   try {
@@ -682,13 +749,13 @@ function restartCaptureForZeroStall(now) {
   }
 }
 
-function maybeCloseWindow() {
+function maybeCloseWindow(): void {
   const now = Time.ticks
   if (now - windowStartTicks >= WINDOW_MS) closeWindow(now)
 }
 
 /** `robot.microphone.onReadable` に割り当てるハンドラ。`this` は素の AudioIn。 */
-function handleReadable(byteLength) {
+function handleReadable(this: AudioInLike, byteLength: number): void {
   if (!running) return
   const startTicks = Time.ticks
   try {
@@ -706,12 +773,12 @@ function handleReadable(byteLength) {
 // UDP ストリーム(trace-udp.js と同じ socket の作法)
 // ---------------------------------------------------------------------------
 
-function ensureSocket() {
-  if (!socket) socket = new Socket({ kind: 'UDP' })
+function ensureSocket(): UdpSocket {
+  if (!socket) socket = new (Socket as unknown as UdpSocketConstructor)({ kind: 'UDP' })
   return socket
 }
 
-function sendStreamPacket() {
+function sendStreamPacket(): void {
   try {
     // イベント発火直後の最初のパケットにだけ ev フィールドを乗せる(v1.1.0 Phase 3b)。
     // 方向推定が添付されていれば lag も同じパケットに乗せる(v1.1.0 Phase 3b+)。
@@ -726,14 +793,14 @@ function sendStreamPacket() {
   }
 }
 
-function clearStreamTimer() {
-  if (streamTimerId != null) {
+function clearStreamTimer(): void {
+  if (streamTimerId !== null) {
     Timer.clear(streamTimerId)
     streamTimerId = null
   }
 }
 
-function applyStream() {
+function applyStream(): void {
   clearStreamTimer()
   if (!params.stream.enabled) return
   try {
@@ -748,7 +815,7 @@ function applyStream() {
 // キャプチャの有効/無効(AudioIn の start/stop)
 // ---------------------------------------------------------------------------
 
-function applyEnabled() {
+function applyEnabled(): void {
   if (!micRef) return
   if (params.enabled && !running) {
     try {
@@ -788,7 +855,7 @@ function applyEnabled() {
 // ---------------------------------------------------------------------------
 
 /** cry.js から呼ぶ。再生直前に capture を止める。例外は握って trace のみ。 */
-export function suspendCapture() {
+export function suspendCapture(): void {
   try {
     if (suspended) return
     suspended = true
@@ -807,7 +874,7 @@ export function suspendCapture() {
 }
 
 /** cry.js から呼ぶ。suspend 前の有効状態に戻す。例外は握って trace のみ。 */
-export function resumeCapture() {
+export function resumeCapture(): void {
   try {
     if (!suspended) return
     suspended = false
@@ -834,7 +901,7 @@ export function resumeCapture() {
 // ---------------------------------------------------------------------------
 
 /** 起動 ~6s 後に mod.js から一度だけ呼ぶ。 */
-export function startMic(robot) {
+export function startMic(robot: RobotWithMicrophone | null | undefined): void {
   if (started) return
   started = true
 
@@ -865,9 +932,9 @@ export function startMic(robot) {
  * (`{ t, type, rms, peak }`)。解除 API はない(mod 構成は静的)。登録した
  * callback が例外を投げても他の callback・検出処理には波及しない。
  */
-export function onMicEvent(callback) {
+export function onMicEvent(callback: unknown): void {
   if (typeof callback !== 'function') return
-  micEventListeners.push(callback)
+  micEventListeners.push(callback as MicEventListener)
 }
 
 /** 現在の状態(GET /mic)。現在レベル・リングバッファ要約・avgProcUs・イベント・params。 */
@@ -879,7 +946,7 @@ export function getMicStatus() {
     t: lastWindow.t,
     rms: lastWindow.rms,
     peak: lastWindow.peak,
-    avgProcUs: avgProcUsEma == null ? 0 : Math.round(avgProcUsEma),
+    avgProcUs: avgProcUsEma === null ? 0 : Math.round(avgProcUsEma),
     // v1.2.0 — 実行時レート診断(sampleRate 非依存化)。rateFactorReady が false のうちは
     // まだ最初のチャンクを処理していない(16kHz 前提の既定値のまま)。
     rate: {
@@ -936,7 +1003,7 @@ export function getMicParams() {
 }
 
 /** 部分更新(PUT /mic/params)。deep merge + 検証 + Preference 永続化 + 即時反映。 */
-export function setMicParams(partial) {
+export function setMicParams(partial: unknown) {
   if (!partial || typeof partial !== 'object') return getMicParams()
 
   const previousEnabled = params.enabled

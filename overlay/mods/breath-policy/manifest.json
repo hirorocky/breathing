@@ -1,0 +1,24 @@
+{
+  "include": ["$(MODDABLE)/examples/manifest_mod.json"],
+  "modules": {
+    "breath-policy/meta": "./meta",
+    "breath-policy/mod": "./mod"
+  },
+  "bundle": {
+    "id": "tech.moddable.stackchan"
+  },
+  "typescript": {
+    "tsconfig": {
+      "compilerOptions": {
+        "lib": ["es2025", "esnext.disposable"],
+        "paths": {
+          "timer": ["$(MODDABLE)/typings/timer"],
+          "mod/config": ["$(MODDABLE)/typings/mod/config"],
+          "embedded:io/*": ["$(MODDABLE)/typings/embedded_io/*"],
+          "embedded:io/system": ["$(MODDABLE)/typings/embedded_io/system"],
+          "embedded:provider/builtin": ["$(MODDABLE)/typings/embedded_provider/builtin"]
+        }
+      }
+    }
+  }
+}

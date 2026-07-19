@@ -64,6 +64,11 @@ deploy マニフェストは `stack-chan/firmware/stackchan/manifest_breath_depl
 6. **実機への通常の書き込みには `overlay/scripts/ota-deploy.sh` を使う。** OTA を利用できない初回セットアップや復旧時だけ、USB の `deploy:breath:m5stackchan-cores3` を使う。breathing 固有機能を含まない `deploy:m5stackchan-cores3` は使わない。
 7. **`docs/journal/` 以外の文書には、現在有効な情報だけを書く。** 古い説明、完了した移行の経緯、廃止した手順は削除する。過去の変更を調べる必要がある場合は Git 履歴を参照する。
 8. **主担当エージェントは設計・判断・作業の分解・成果のレビューと統合を担当する。** 範囲が明確で独立して進められる実装・調査・テストは、利用可能なサブエージェントへ委譲する。サブエージェントの成果は主担当が確認し、プロジェクト全体との整合性と最終結果に責任を持つ。
+9. **`overlay/mods/` は strict TypeScript で実装し、lint と format にはルートの `biome.json` を使う。** `stack-chan/firmware/` で `npm run check:breath` を実行し、型エラー・lint warning・format 差分を残さない。
+10. **静的チェックはコミットの有無にかかわらず積極的に実行する。** 変更後や区切りのよい作業ごとに `npm --prefix stack-chan/firmware run check:breath` と `git diff --check` を実行する。`scripts/stack-chan-setup.sh` は `.githooks/pre-commit` を有効化し、コミット時にも同じチェックを自動実行する。
+11. **デプロイ前に生成物を確認する。** overlayやforkのsetup-targetを変更した場合、増分ビルドを信用してdeployだけを繰り返さない。必要なら対象のModdable生成ディレクトリを削除してbuildし、`manifest_flat.json`・生成JS/XSB・startupSound設定が変更内容を含むことを確認してからdeployする。反映確認は実機の画面だけで判断せず、`/status`の`boot.deployNotice`や`bootError`も読む。
+12. **native変更のUSB書き込みは `overlay/scripts/native-deploy.sh` に集約する。** vendor版Moddable SDKを使い、check→キャッシュ削除→build→生成物検証→deployを行う。通常更新はWi-Fi OTAとし、同じdeployを根拠なく繰り返さない。
+13. **プロジェクトの型チェックはTypeScript 7.0.2を使う。** `@typescript/native` が `.bin/tsc` をTS7へ固定する。`@typescript/typescript6` はTypeDocとZedのvtslsが必要とする互換API専用であり、通常の `tsc` や実機ビルドの型検査をTS6へ戻さない。
 
 ---
 

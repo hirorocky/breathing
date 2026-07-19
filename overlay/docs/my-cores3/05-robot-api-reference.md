@@ -8,7 +8,7 @@
 
 | API（シグネチャ） | 説明 | 補足/例 |
 | --- | --- | --- |
-| `async say(text: string, volume?: number): Promise<Maybe<string>>` | TTS エンジンで `text` を発話する。完了時に `{ success: true, value: text }`、失敗時に `{ success: false, reason }` を返す。 | breath はこの API を使わず、非言語音を `cry.js` で再生する。`volume` は省略可。 |
+| `async say(text: string, volume?: number): Promise<Maybe<string>>` | TTS エンジンで `text` を発話する。完了時に `{ success: true, value: text }`、失敗時に `{ success: false, reason }` を返す。 | breath はこの API を使わず、非言語音を `cry.ts` で再生する。`volume` は省略可。 |
 | `async record(durationMilliSec?: number): Promise<ArrayBuffer>` | マイクから録音し、WAVフォーマットの `ArrayBuffer` を返す。 | `durationMilliSec` 省略時は内部実装（`Microphone#record`）の既定値（3000ms）。マイクが無い機体では `Error('This device does not support a microphone.')` を投げる。 |
 | `async tone(hz: number, duration: number, volume?: number): Promise<void>` | 指定した周波数 `hz` ・時間 `duration`（ミリ秒）でトーン音を再生する。 | `volume` は0〜1。範囲外だと `Error('Volume must be between 0 and 1')` を投げる。再生完了まで待つ。 |
 | `async playAudio(buffer: ArrayBuffer): Promise<boolean>` | 音声バッファをそのまま再生する。 | 内部で `tone` オブジェクトの `play()` を呼ぶ。`play` が実装されていない場合は `false` を返す。`record()` で録った音声の再生などに使う。 |

@@ -1,16 +1,25 @@
-import { attachStatusBar } from 'status-bar'
-import { attachSettingsBar, applySavedSettings } from 'settings-bar'
-import Timer from 'timer'
-import config from 'mc/config'
-import { startDevTools } from 'breath/dev/dev-tools'
 import { initCry } from 'breath/cry'
-import { startLiveliness, shouldDeepBreathe, getDeepBreathParams, maybeSighForDeepBreath } from 'breath/liveliness'
-import { startMic } from 'breath/mic'
-import { startReactions } from 'breath/reactions'
-import { startEmotion, getEmotion } from 'breath/emotion'
+import { markDevHealthy, startDevTools } from 'breath/dev/dev-tools'
+import { getEmotion, startEmotion } from 'breath/emotion'
 import { startLed } from 'breath/led'
-import { startPowerControl } from 'breath/power'
+import { getDeepBreathParams, maybeSighForDeepBreath, shouldDeepBreathe, startLiveliness } from 'breath/liveliness'
+import { startMic } from 'breath/mic'
 import { startPosture } from 'breath/posture'
+import { startPowerControl } from 'breath/power'
+import { startReactions } from 'breath/reactions'
+import { showDeployNotice } from 'deploy-notice'
+import config from 'mc/config'
+import { attachPolicyError } from 'policy-error'
+import type { Robot } from 'robot'
+import { applySavedSettings, attachSettingsBar } from 'settings-bar'
+import { attachStatusBar } from 'status-bar'
+import Timer from 'timer'
+
+const breathEnv = globalThis as typeof globalThis & {
+  breathPulse?: number
+  breathSettingsAttachError?: string
+}
+const breathConfig = config as typeof config & { breathDevTools?: boolean }
 
 /** v1.0.0 Layer 0 — 吸 4s / 吐 6s。LCD（口 + breath motion）のみ。 */
 const INHALE_SEC = 4
@@ -20,19 +29,19 @@ const MOUTH_EXHALE = 0.04
 // v1.1.0 Phase 2a — 深呼吸(liveliness.deepBreath)の口の開きの絶対上限。
 const MOUTH_DEEP_MAX = 0.35
 
-function jitter(seconds, spread = 0.03) {
+function jitter(seconds: number, spread = 0.03): number {
   return seconds * (1 + (Math.random() * 2 - 1) * spread)
 }
 
-function clamp01(x) {
+function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x
 }
 
-function delay(ms) {
-  return new Promise((resolve) => Timer.set(resolve, ms))
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => Timer.set(() => resolve(), ms))
 }
 
-async function animateMouth(robot, from, to, durationMs) {
+async function animateMouth(robot: Robot, from: number, to: number, durationMs: number): Promise<void> {
   const steps = Math.max(1, Math.floor(durationMs / 50))
   const stepMs = durationMs / steps
   for (let i = 1; i <= steps; i++) {
@@ -41,17 +50,17 @@ async function animateMouth(robot, from, to, durationMs) {
     robot.setMouthOpen(mouthOpen)
     // v1.2.0 (E2) — led.js が呼吸連動の明るさゆらぎに読む(0..1、口の開きを
     // MOUTH_EXHALE..MOUTH_DEEP_MAX で正規化)。led.js 不在時は誰も読まないだけ。
-    globalThis.breathPulse = clamp01((mouthOpen - MOUTH_EXHALE) / (MOUTH_DEEP_MAX - MOUTH_EXHALE))
+    breathEnv.breathPulse = clamp01((mouthOpen - MOUTH_EXHALE) / (MOUTH_DEEP_MAX - MOUTH_EXHALE))
     await delay(stepMs)
   }
 }
 
-async function runBreathCycle(robot) {
+async function runBreathCycle(robot: Robot): Promise<void> {
   // v1.1.0 Phase 2a — サイクル頭で liveliness に深呼吸を問い合わせる。
   // liveliness 側が無効/未起動でも常に false を返す設計のため、通常サイクルの
   // 挙動(jitter の呼び順・scale=1・peak=MOUTH_INHALE)は 1 ビットも変わらない。
   let isDeepBreath = false
-  let deepParams = null
+  let deepParams: ReturnType<typeof getDeepBreathParams> | null = null
   try {
     isDeepBreath = shouldDeepBreathe()
     if (isDeepBreath) deepParams = getDeepBreathParams()
@@ -60,8 +69,8 @@ async function runBreathCycle(robot) {
     isDeepBreath = false
   }
 
-  const scale = isDeepBreath ? deepParams.scale : 1
-  const peakMouthOpen = isDeepBreath ? Math.min(MOUTH_INHALE * deepParams.mouthScale, MOUTH_DEEP_MAX) : MOUTH_INHALE
+  const scale = deepParams?.scale ?? 1
+  const peakMouthOpen = deepParams ? Math.min(MOUTH_INHALE * deepParams.mouthScale, MOUTH_DEEP_MAX) : MOUTH_INHALE
 
   // v1.2.0 (E1) — 感情エンジンの breathFactor(覚醒で呼吸が速く・沈静で遅く)を
   // 1 個だけ読んで乗算する。emotion 不在/失敗時は 1(無変調)にフォールバックする。
@@ -91,7 +100,7 @@ async function runBreathCycle(robot) {
   await animateMouth(robot, peakMouthOpen, MOUTH_EXHALE, exhale * 1000)
 }
 
-async function breathLoop(robot) {
+async function breathLoop(robot: Robot): Promise<never> {
   trace('[breath] start (face only, servo off)\n')
 
   robot.setEmotion('NEUTRAL')
@@ -102,13 +111,22 @@ async function breathLoop(robot) {
   // setTorque(false) は UART 応答待ちで WDT 再起動することがあるため省略（v1.0.1 調査中）
   trace('[breath] loop running\n')
 
+  // biome-ignore lint/suspicious/noUnnecessaryConditions: 呼吸はデバイス稼働中ずっと続く常駐ループ。
   while (true) {
     await runBreathCycle(robot)
   }
 }
 
-export function onRobotCreated(robot) {
+export function onRobotCreated(robot: Robot): void {
   trace('[breath] mod onRobotCreated\n')
+
+  try {
+    attachPolicyError(robot)
+  } catch (error) {
+    trace(`[policy] error screen attach failed: ${error}\n`)
+  }
+
+  showDeployNotice(robot)
 
   try {
     startPowerControl(robot)
@@ -138,13 +156,17 @@ export function onRobotCreated(robot) {
     try {
       attachSettingsBar(robot)
     } catch (error) {
-      globalThis.breathSettingsAttachError = String(error)
+      breathEnv.breathSettingsAttachError = String(error)
       trace(`[settings-bar] attach failed: ${error}\n`)
     }
   }, 2000)
 
+  // Robot生成と初期スケジュール登録まで完了した時点を起動成功として記録する。
+  markDevHealthy()
+  ;(globalThis as typeof globalThis & { breathDevHealthy?: boolean }).breathDevHealthy = true
+
   Timer.set(() => {
-    if (!config.breathDevTools) return
+    if (!breathConfig.breathDevTools) return
     try {
       startDevTools()
     } catch (error) {

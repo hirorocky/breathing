@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# デバイス IP の自動発見（overlay/mods/breath/dev/beacon.js の UDP ビーコン受信）。
+# デバイス IP の自動発見（overlay/mods/breath/dev/beacon.ts の UDP ビーコン受信）。
 # nc は macOS の実装差で不安定なため python3 の recvfrom ループを使う（logs.sh と同じ流儀）。
 #
 # port 8687 を最大 15 秒（ビーコン周期 10 秒 + 余裕）待ち受け、最初に受信した

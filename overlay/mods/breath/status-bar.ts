@@ -1,5 +1,6 @@
 import { readBatterySample } from 'm5stackchan/battery'
-import { Container, Content, Label, Skin, Style } from 'piu/MC'
+import 'piu/MC'
+import type { Container as PiuContainer, Label as PiuLabel } from 'piu/MC'
 import Timer from 'timer'
 
 /** 画面上端から下スワイプで表示する時刻・バッテリーバー */
@@ -23,16 +24,34 @@ function formatTimeJst() {
   return `${h}:${m}`
 }
 
-function formatBattery(sample) {
+type BatterySample = { charging: boolean; pct: number }
+type RobotWithRenderer = { renderer?: { application?: unknown; addDecorator(content: PiuContainer): void } }
+type StatusGlobals = typeof globalThis & {
+  breathStatusBarOpen?: boolean
+  breathStatusShowCount?: number
+  breathStatusSwipeBounds?: { x: number; y: number; width: number; height: number }
+  breathStatusTouchCount?: number
+  breathStatusLastDy?: number
+}
+const statusGlobal = globalThis as StatusGlobals
+
+function formatBattery(sample: BatterySample | null | undefined) {
   if (!sample) return '--%'
   const prefix = sample.charging ? '+' : ''
   return `${prefix}${sample.pct}%`
 }
 
 class StatusBarBehavior extends Behavior {
-  onCreate(content) {
-    this.timeLabel = content.content('time')
-    this.batteryLabel = content.content('battery')
+  timeLabel: PiuLabel | null = null
+  batteryLabel: PiuLabel | null = null
+  open: boolean = false
+  labelTimer: ReturnType<typeof Timer.set> | null = null
+  hideTimer: ReturnType<typeof Timer.set> | null = null
+  slideY = SLIDE_HIDDEN
+
+  override onCreate(content: PiuContainer) {
+    this.timeLabel = content.content('time') as PiuLabel
+    this.batteryLabel = content.content('battery') as PiuLabel
     this.open = false
     this.labelTimer = null
     this.hideTimer = null
@@ -40,8 +59,8 @@ class StatusBarBehavior extends Behavior {
     this.applyPosition(content)
   }
 
-  applyPosition(content) {
-    content.coordinates = { left: 0, right: 0, top: this.slideY, height: BAR_HEIGHT }
+  applyPosition(content: PiuContainer) {
+    content.coordinates = { left: 0, right: 0, top: this.slideY, height: BAR_HEIGHT } as never
   }
 
   updateLabels() {
@@ -67,7 +86,7 @@ class StatusBarBehavior extends Behavior {
     }
   }
 
-  startHideTimer(content) {
+  startHideTimer(content: PiuContainer) {
     this.stopHideTimer()
     this.hideTimer = Timer.set(() => this.hideBar(content), AUTO_HIDE_MS)
   }
@@ -79,19 +98,19 @@ class StatusBarBehavior extends Behavior {
     }
   }
 
-  showBar(content) {
+  showBar(content: PiuContainer) {
     this.open = true
     this.slideY = 0
     content.visible = true
     this.applyPosition(content)
     this.startLabelTimer()
     this.startHideTimer(content)
-    globalThis.breathStatusBarOpen = true
-    globalThis.breathStatusShowCount = (globalThis.breathStatusShowCount ?? 0) + 1
+    statusGlobal.breathStatusBarOpen = true
+    statusGlobal.breathStatusShowCount = (statusGlobal.breathStatusShowCount ?? 0) + 1
     trace('[status-bar] showBar\n')
   }
 
-  hideBar(content) {
+  hideBar(content: PiuContainer) {
     this.stopHideTimer()
     if (!this.open && this.slideY === SLIDE_HIDDEN) return
     this.open = false
@@ -99,7 +118,7 @@ class StatusBarBehavior extends Behavior {
     this.slideY = SLIDE_HIDDEN
     content.visible = false
     this.applyPosition(content)
-    globalThis.breathStatusBarOpen = false
+    statusGlobal.breathStatusBarOpen = false
     trace('[status-bar] hideBar\n')
   }
 }
@@ -119,8 +138,9 @@ const StatusBar = Container.template(() => ({
   ],
 }))
 
-export function attachStatusBar(robot) {
-  const app = robot.renderer?.application
+export function attachStatusBar(robot: RobotWithRenderer) {
+  const renderer = robot.renderer
+  const app = renderer?.application
   if (!app) throw new Error('renderer application is unavailable')
 
   const bar = new StatusBar({})
@@ -134,33 +154,42 @@ export function attachStatusBar(robot) {
     active: true,
     backgroundTouch: true,
     Behavior: class extends Behavior {
-      onDisplaying(content) {
+      touchStartY: number | null = null
+
+      override onDisplaying(content: PiuContainer) {
         const bounds = content.bounds
-        globalThis.breathStatusSwipeBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
-        trace(`[status-bar] swipe zone displaying: ${content.width}x${content.height} bounds=${bounds.x},${bounds.y},${bounds.width},${bounds.height}\n`)
+        statusGlobal.breathStatusSwipeBounds = {
+          x: bounds.x ?? 0,
+          y: bounds.y ?? 0,
+          width: bounds.width ?? 0,
+          height: bounds.height ?? 0,
+        }
+        trace(
+          `[status-bar] swipe zone displaying: ${content.width}x${content.height} bounds=${bounds.x},${bounds.y},${bounds.width},${bounds.height}\n`,
+        )
       }
 
-      onTouchBegan(_content, id, x, y) {
-        globalThis.breathStatusTouchCount = (globalThis.breathStatusTouchCount ?? 0) + 1
+      override onTouchBegan(_content: PiuContainer, id: number, x: number, y: number) {
+        statusGlobal.breathStatusTouchCount = (statusGlobal.breathStatusTouchCount ?? 0) + 1
         this.touchStartY = y
         trace(`[status-bar] touch began: id=${id} x=${x} y=${y}\n`)
       }
 
-      onTouchEnded(_content, id, x, y) {
-        if (this.touchStartY == null) return
+      onTouchEnded(_content: PiuContainer, id: number, x: number, y: number) {
+        if (this.touchStartY === null) return
         const dy = y - this.touchStartY
         this.touchStartY = null
-        globalThis.breathStatusLastDy = dy
+        statusGlobal.breathStatusLastDy = dy
         trace(`[status-bar] touch ended: id=${id} x=${x} y=${y} dy=${dy}\n`)
-        const barBehavior = bar.behavior
+        const barBehavior = bar.behavior as StatusBarBehavior
         if (!barBehavior.open && dy >= MIN_SWIPE_DY) bar.delegate('showBar')
         else if (barBehavior.open && dy <= -MIN_SWIPE_DY) bar.delegate('hideBar')
       }
     },
   }))
 
-  robot.renderer.addDecorator(new TopSwipeZone({}))
-  robot.renderer.addDecorator(bar)
+  renderer.addDecorator(new TopSwipeZone({}))
+  renderer.addDecorator(bar)
 
   trace(`[status-bar] attached v${STATUS_BAR_VERSION}\n`)
 }

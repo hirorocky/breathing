@@ -1,0 +1,10 @@
+{
+  "extends": "./stack-chan/firmware/tsconfig.breath.json",
+  "compilerOptions": {
+    "types": [
+      "./stack-chan/firmware/node_modules/@moddable/typings/xs",
+      "./stack-chan/firmware/node_modules/@moddable/typings/mcpack",
+      "./stack-chan/firmware/node_modules/@moddable/typings/easing"
+    ]
+  }
+}

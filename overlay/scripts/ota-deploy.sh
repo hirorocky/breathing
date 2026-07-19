@@ -27,7 +27,7 @@ else
 fi
 
 FIRMWARE_DIR="$REPO_ROOT/stack-chan/firmware"
-BIN_PATH="$HOME/.local/share/moddable/build/tmp/esp32/m5stackchan_cores3/debug/stackchan/xsProj-esp32s3/build/xs_esp32.bin"
+BIN_PATH="$HOME/.local/share/moddable/build/tmp/esp32/m5stackchan_cores3/release/stackchan/xsProj-esp32s3/build/xs_esp32.bin"
 DEV_TOKEN="breath-dev"
 POLL_TIMEOUT_SEC=180
 POLL_INTERVAL_SEC=3
@@ -37,20 +37,28 @@ BUILD_ID="$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%H%M%S)"
 
 echo "[ota-deploy] host=$HOST buildId=$BUILD_ID"
 
-echo "[ota-deploy] build: npm run build:breath:m5stackchan-cores3 -- buildId=$BUILD_ID"
-(cd "$FIRMWARE_DIR" && npm run build:breath:m5stackchan-cores3 -- "buildId=$BUILD_ID")
+echo "[ota-deploy] build: npm run build:breath-release:m5stackchan-cores3 -- buildId=$BUILD_ID"
+BUILD_STARTED_AT="$(date +%s)"
+(cd "$FIRMWARE_DIR" && npm run build:breath-release:m5stackchan-cores3 -- "buildId=$BUILD_ID")
+BUILD_SECONDS="$(( $(date +%s) - BUILD_STARTED_AT ))"
 
 if [ ! -f "$BIN_PATH" ]; then
   echo "[ota-deploy] ERROR: binary not found at $BIN_PATH" >&2
   exit 1
 fi
 echo "[ota-deploy] build ok: $(ls -l "$BIN_PATH" | awk '{print $5, $NF}')"
+echo "[ota-deploy] build_seconds=$BUILD_SECONDS"
 
 echo "[ota-deploy] upload: PUT http://$HOST/ota"
-if ! curl -sf --connect-timeout 10 --max-time "$UPLOAD_TIMEOUT_SEC" -H 'Expect:' -H "x-dev-token: $DEV_TOKEN" -T "$BIN_PATH" "http://$HOST/ota"; then
+OTA_HEADERS="$(mktemp)"
+trap 'rm -f "$OTA_HEADERS"' EXIT
+if ! curl -sf --connect-timeout 10 --max-time "$UPLOAD_TIMEOUT_SEC" --dump-header "$OTA_HEADERS" \
+  --write-out '[ota-deploy] upload_seconds=%{time_total} upload_bytes=%{size_upload} upload_speed_bps=%{speed_upload}\n' \
+  -H 'Expect:' -H "x-dev-token: $DEV_TOKEN" -T "$BIN_PATH" "http://$HOST/ota"; then
   echo "[ota-deploy] ERROR: upload failed (device should still be running the previous firmware)" >&2
   exit 1
 fi
+awk 'BEGIN { IGNORECASE=1 } /^x-ota-/ { sub(/\r$/, ""); print "[ota-deploy] device_" $0 }' "$OTA_HEADERS"
 echo "[ota-deploy] upload ok. device restarting; waiting for buildId match (timeout ${POLL_TIMEOUT_SEC}s)"
 
 elapsed=0

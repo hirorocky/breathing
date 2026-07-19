@@ -1,7 +1,9 @@
+import config from 'mc/config'
+import Net from 'net'
 import { Socket } from 'socket'
 import Timer from 'timer'
-import Net from 'net'
-import config from 'mc/config'
+
+const breathConfig = config as typeof config & { buildId?: string }
 
 /**
  * デバイス IP 自動発見用の UDP ビーコン（v1.0.3 dev tools）。
@@ -21,19 +23,22 @@ import config from 'mc/config'
  */
 const UDP_PORT = 8687
 const GLOBAL_BROADCAST = '255.255.255.255'
-const INTERVAL_MS = 10000
+const INTERVAL_MS = 10_000
 const BEACON_NAME = 'stackchan'
 
 let started = false
-let socket = null
+type UdpSocket = { write(host: string, port: number, data: ArrayBuffer): void }
+type UdpSocketConstructor = new (options: { kind: 'UDP' }) => UdpSocket
+
+let socket: UdpSocket | null = null
 let failureTraced = false
 
-function ensureSocket() {
-  if (!socket) socket = new Socket({ kind: 'UDP' })
+function ensureSocket(): UdpSocket {
+  if (!socket) socket = new (Socket as unknown as UdpSocketConstructor)({ kind: 'UDP' })
   return socket
 }
 
-function safeIp() {
+function safeIp(): string | null {
   try {
     return Net.get('IP') ?? null
   } catch (_error) {
@@ -41,15 +46,15 @@ function safeIp() {
   }
 }
 
-function buildPayload() {
+function buildPayload(): string {
   return JSON.stringify({
     name: BEACON_NAME,
     ip: safeIp(),
-    buildId: config?.buildId ?? 'unknown',
+    buildId: breathConfig.buildId ?? 'unknown',
   })
 }
 
-function sendBeacon() {
+function sendBeacon(): void {
   try {
     const buffer = ArrayBuffer.fromString(buildPayload())
     ensureSocket().write(GLOBAL_BROADCAST, UDP_PORT, buffer)
@@ -66,7 +71,7 @@ function sendBeacon() {
 }
 
 /** 10 秒周期の UDP ビーコンを開始する。二重に開始しない。 */
-export function startBeacon() {
+export function startBeacon(): void {
   if (started) return
   started = true
 

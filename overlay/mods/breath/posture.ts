@@ -1,7 +1,8 @@
+import { getEmotion } from 'breath/emotion'
+import { deepClone, loadParams, mergeValidated, persistParams, sanitizeParams } from 'breath/param-store'
+import type { PoseRobot } from 'breath/types'
 import Time from 'time'
 import Timer from 'timer'
-import { deepClone, mergeValidated, sanitizeParams, loadParams, persistParams } from 'breath/param-store'
-import { getEmotion } from 'breath/emotion'
 
 /**
  * v1.3.0 (E3) — 感情姿勢(頭の pitch)。サーボ解禁後、首を「振る」のは lookAt の自動追従
@@ -66,34 +67,37 @@ const CLAMP_RANGES = {
 }
 
 let params = deepClone(defaults)
-let robotRef = null
+let robotRef: PoseRobot | null = null
 let started = false
-let tickTimerId = null
 
-let currentPitchDeg = null // 直近に適用した(または起動時に記録した)pitch。レート制限の差分計算に使う
-let lastMoveTicks = -Infinity
+let currentPitchDeg: number | null = null // 直近に適用した(または起動時に記録した)pitch。レート制限の差分計算に使う
+let lastMoveTicks = Number.NEGATIVE_INFINITY
 let moveInProgress = false // setTorque(true) 〜 setTorque(false) の間 true(多重発火防止)
 
 // ---------------------------------------------------------------------------
 // ヘルパー
 // ---------------------------------------------------------------------------
 
-function clamp(x, min, max) {
+function clamp(x: number, min: number, max: number) {
   return x < min ? min : x > max ? max : x
 }
 
-function randomInRange(min, max) {
+function randomInRange(min: number, max: number) {
   return min + Math.random() * Math.max(0, max - min)
 }
 
-function hasRobotPoseApi(robot) {
-  return !!robot && typeof robot.setPose === 'function' && typeof robot.setTorque === 'function'
+function hasRobotPoseApi(robot: unknown): robot is PoseRobot {
+  if (!robot || typeof robot !== 'object') return false
+  const candidate = robot as Partial<PoseRobot>
+  return typeof candidate.setPose === 'function' && typeof candidate.setTorque === 'function'
 }
 
 /** robot.setTorque(bool) を fire-and-forget で呼ぶ(await しない。reject のみ trace)。 */
-function safeSetTorque(torque) {
+function safeSetTorque(torque: boolean) {
+  const robot = robotRef
+  if (!robot) return
   try {
-    robotRef.setTorque(torque).then(undefined, (error) => {
+    robot.setTorque(torque).then(undefined, (error: unknown) => {
       trace(`[posture] setTorque(${torque}) failed: ${error}\n`)
     })
   } catch (error) {
@@ -102,9 +106,11 @@ function safeSetTorque(torque) {
 }
 
 /** robot.setPose({rotation:{y:0,p,r:0}}, time) を fire-and-forget で呼ぶ。 */
-function safeSetPose(pitchRad, yawRad, time) {
+function safeSetPose(pitchRad: number, yawRad: number, time: number) {
+  const robot = robotRef
+  if (!robot) return
   try {
-    robotRef.setPose({ rotation: { y: yawRad, p: pitchRad, r: 0 } }, time).then(undefined, (error) => {
+    robot.setPose({ rotation: { y: yawRad, p: pitchRad, r: 0 } }, time).then(undefined, (error: unknown) => {
       trace(`[posture] setPose failed: ${error}\n`)
     })
   } catch (error) {
@@ -116,7 +122,7 @@ function safeSetPose(pitchRad, yawRad, time) {
  * 姿勢を適用する共通手順: setTorque(true) → setPose → time+200ms 後に setTorque(false)。
  * moveInProgress で多重発火を防ぐ。呼び出し前提: hasRobotPoseApi(robotRef) 済み。
  */
-function applyPosture(pitchDeg, yawDeg, time, label) {
+function applyPosture(pitchDeg: number, yawDeg: number, time: number, label: string) {
   if (moveInProgress) {
     trace(`[posture] ${label} skipped: move in progress\n`)
     return false
@@ -129,14 +135,17 @@ function applyPosture(pitchDeg, yawDeg, time, label) {
   // 定義し、符号を反転して渡す(2026-07-07 実機で特定: 正の値は全て 0 に
   // クランプされ首が全く動かなかった)。
   const pitchRad = (-pitchDeg * Math.PI) / 180
-  const yawRad = ((yawDeg ?? 0) * Math.PI) / 180
-  trace(`[posture] ${label} pitch=${pitchDeg.toFixed(1)}deg yaw=${(yawDeg ?? 0).toFixed(1)}deg time=${time.toFixed(2)}s\n`)
+  const yawRad = (yawDeg * Math.PI) / 180
+  trace(`[posture] ${label} pitch=${pitchDeg.toFixed(1)}deg yaw=${yawDeg.toFixed(1)}deg time=${time.toFixed(2)}s\n`)
   safeSetTorque(true)
   safeSetPose(pitchRad, yawRad, time)
-  Timer.set(() => {
-    safeSetTorque(false)
-    moveInProgress = false
-  }, time * 1000 + 200)
+  Timer.set(
+    () => {
+      safeSetTorque(false)
+      moveInProgress = false
+    },
+    time * 1000 + 200,
+  )
   return true
 }
 
@@ -146,10 +155,10 @@ function applyPosture(pitchDeg, yawDeg, time, label) {
 
 function performTick() {
   try {
-    if (!started || !params.enabled) return
+    if (!(started && params.enabled)) return
     if (!hasRobotPoseApi(robotRef)) return
 
-    let emo
+    let emo: ReturnType<typeof getEmotion>
     try {
       emo = getEmotion()
     } catch (error) {
@@ -198,7 +207,7 @@ function performTick() {
  */
 export function triggerRecoil() {
   try {
-    if (!started || !params.enabled || !params.recoil.enabled) return false
+    if (!(started && params.enabled && params.recoil.enabled)) return false
     if (!hasRobotPoseApi(robotRef)) return false
     if (moveInProgress) {
       trace('[posture] recoil skipped: move in progress\n')
@@ -216,12 +225,15 @@ export function triggerRecoil() {
 
     Timer.set(() => {
       safeSetPose((base * Math.PI) / 180, 0, params.recoil.returnTime)
-      Timer.set(() => {
-        safeSetTorque(false)
-        moveInProgress = false
-        currentPitchDeg = base
-        lastMoveTicks = Time.ticks
-      }, params.recoil.returnTime * 1000 + 200)
+      Timer.set(
+        () => {
+          safeSetTorque(false)
+          moveInProgress = false
+          currentPitchDeg = base
+          lastMoveTicks = Time.ticks
+        },
+        params.recoil.returnTime * 1000 + 200,
+      )
     }, params.recoil.holdMs)
 
     return true
@@ -237,18 +249,18 @@ export function triggerRecoil() {
 // ---------------------------------------------------------------------------
 
 /** mod.js から起動 +10s で一度だけ呼ぶ。 */
-export function startPosture(robot) {
+export function startPosture(robot: unknown) {
   if (started) return
   started = true
-  robotRef = robot
   params = loadParams(PREF_KEY, defaults, CLAMP_RANGES)
 
-  if (!hasRobotPoseApi(robotRef)) {
+  if (!hasRobotPoseApi(robot)) {
     trace('[posture] started (no-op: robot has no pose API — none driver?)\n')
     return
   }
+  robotRef = robot
 
-  tickTimerId = Timer.repeat(performTick, TICK_MS)
+  Timer.repeat(performTick, TICK_MS)
   trace('[posture] started\n')
 }
 
@@ -295,7 +307,7 @@ export function getPostureStatus() {
     hasPoseApi: hasRobotPoseApi(robotRef),
     driverName: readDriverName(),
     rotationDeg: readRotationDeg(),
-    lastMoveAgoS: lastMoveTicks === -Infinity ? null : Math.round((Time.ticks - lastMoveTicks) / 1000),
+    lastMoveAgoS: lastMoveTicks === Number.NEGATIVE_INFINITY ? null : Math.round((Time.ticks - lastMoveTicks) / 1000),
   }
 }
 
@@ -305,7 +317,7 @@ export function getPostureParams() {
 }
 
 /** 部分更新(PUT /posture/params)。deep merge + 検証 + Preference 永続化。 */
-export function setPostureParams(partial) {
+export function setPostureParams(partial: unknown) {
   if (!partial || typeof partial !== 'object') return getPostureParams()
   params = sanitizeParams(mergeValidated(params, partial), CLAMP_RANGES)
   persistParams(PREF_KEY, params)
@@ -317,7 +329,7 @@ export function setPostureParams(partial) {
  * POST /posture/test(要 token、dev-server 側)。直接姿勢テスト用 — レート制限を無視して
  * 即座に適用する。robot に pose API が無ければ false。
  */
-export function testPosture(yawDeg, pitchDeg, time) {
+export function testPosture(yawDeg: number, pitchDeg: number, time: number) {
   if (!started) return false
   if (!hasRobotPoseApi(robotRef)) return false
   if (moveInProgress) {

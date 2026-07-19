@@ -2,3 +2,6 @@
 	path = stack-chan
 	url = https://github.com/hirorocky/stack-chan.git
 	branch = breath
+[submodule "vendor/moddable"]
+	path = vendor/moddable
+	url = https://github.com/Moddable-OpenSource/moddable.git

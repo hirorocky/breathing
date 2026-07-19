@@ -1,0 +1,11 @@
+{
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "tsdk": "stack-chan/firmware/node_modules/@typescript/typescript6/lib"
+        }
+      }
+    }
+  }
+}

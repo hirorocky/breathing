@@ -1,8 +1,8 @@
 import AudioOut from 'embedded:io/audio/out'
+import { resumeCapture, suspendCapture } from 'breath/mic'
 import Preference from 'preference'
 import Time from 'time'
 import Timer from 'timer'
-import { suspendCapture, resumeCapture } from 'breath/mic'
 
 /**
  * v1.1.0 Loop A — デバイス側鳴き声シンセ（murmur/sigh/startle/touch）。
@@ -30,9 +30,86 @@ const CHUNK_SAMPLES = 64
 const CHUNK_TICK_MS = 4
 const TARGET_PEAK_DBFS = -3.0
 const VIBRATO_FADE_SEC = 0.12
-const TARGET_PEAK_LINEAR = Math.pow(10, TARGET_PEAK_DBFS / 20)
+const TARGET_PEAK_LINEAR = 10 ** (TARGET_PEAK_DBFS / 20)
 
-export const CRY_NAMES = ['murmur', 'sigh', 'startle', 'touch']
+export const CRY_NAMES = ['murmur', 'sigh', 'startle', 'touch'] as const
+export type CryName = (typeof CRY_NAMES)[number]
+
+type Point = [number, number]
+interface Jitter {
+  f0?: number
+  durationMs?: number
+  harmonics?: number
+  noiseMix?: number
+  noiseCutoff?: number
+  vibratoHz?: number
+  vibratoCents?: number
+  tremoloHz?: number
+  tremoloDepth?: number
+  ampGain?: number
+}
+
+interface Recipe {
+  name: string
+  durationMs: number
+  pitch: Point[]
+  harmonics?: number[]
+  vibrato?: { hz: number; cents: number; onset?: number }
+  tremolo?: { hz: number; depth: number }
+  amp: Point[]
+  noise?: { mix: number; cutoff?: number; cutoffEnd?: number }
+  jitter?: Jitter
+}
+
+interface Recipes {
+  murmur: Recipe
+  sigh: Recipe
+  startle: Recipe[]
+  touch: Recipe
+}
+
+interface CacheEntry {
+  pcm: Int16Array
+  patternName: string | null
+}
+
+type ClosableAudioOut = AudioOut & { close(): void }
+
+type JobStage = 'tonal' | 'mix' | 'quantize'
+
+interface GenerationJob {
+  name: CryName
+  patternName: string | null
+  pitchPoints: Point[]
+  ampPoints: Point[]
+  harmonics: number[]
+  harmonicsNorm: number
+  vibrato: Recipe['vibrato'] | null
+  tremolo: Recipe['tremolo'] | null
+  noiseMix: number
+  noiseCutoffPoints: Point[] | null
+  n: number
+  stage: JobStage
+  i: number
+  phase: number
+  noisePrev: number
+  noisePeak: number
+  outPeak: number
+  scale: number
+  buf: Float32Array
+  noiseRaw: Float32Array | null
+  pcm: Int16Array | null
+  startedAt: number
+}
+
+function isCryName(value: string): value is CryName {
+  return (CRY_NAMES as readonly string[]).includes(value)
+}
+
+function isRecipe(value: unknown): value is Recipe {
+  if (typeof value !== 'object' || value === null) return false
+  return 'pitch' in value && Array.isArray(value.pitch) && 'amp' in value && Array.isArray(value.amp)
+}
 
 const PREF_DOMAIN = 'breath'
 const PREF_KEYS = {
@@ -46,7 +123,7 @@ const PREF_KEYS = {
 // 既定レシピ（synth.py の PRESETS と同一。startle はグループ = パターン配列）
 // ---------------------------------------------------------------------------
 
-const DEFAULT_RECIPES = {
+const DEFAULT_RECIPES: Recipes = {
   murmur: {
     name: 'murmur',
     durationMs: 420,
@@ -208,38 +285,37 @@ const DEFAULT_RECIPES = {
 const recipes = deepClone(DEFAULT_RECIPES)
 
 // name -> { pcm: Int16Array, patternName: string|null } | null（未生成/消費済み）
-const cache = {
+const cache: Record<CryName, CacheEntry | null> = {
   murmur: null,
   sigh: null,
   startle: null,
   touch: null,
 }
 
-const queue = [] // 生成待ちの name（FIFO、重複なし）
-let currentJob = null
+const queue: CryName[] = [] // 生成待ちの name（FIFO、重複なし）
+let currentJob: GenerationJob | null = null
 let started = false
 
 // ---------------------------------------------------------------------------
 // 補間ヘルパー（synth.py の interp_linear / interp_log と同一のセマンティクス）
 // ---------------------------------------------------------------------------
 
-function clamp01(x) {
+function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x
 }
 
-function deepClone(value) {
-  return JSON.parse(JSON.stringify(value))
+function deepClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
-function interpLinear(t, points) {
-  if (t <= points[0][0]) return points[0][1]
-  const last = points[points.length - 1]
+function interpLinear(t: number, points: Point[]): number {
+  const first = points[0] ?? [0, 0]
+  if (t <= first[0]) return first[1]
+  const last = points[points.length - 1] ?? first
   if (t >= last[0]) return last[1]
   for (let k = 0; k < points.length - 1; k++) {
-    const t0 = points[k][0]
-    const v0 = points[k][1]
-    const t1 = points[k + 1][0]
-    const v1 = points[k + 1][1]
+    const [t0, v0] = points[k] ?? first
+    const [t1, v1] = points[k + 1] ?? last
     if (t >= t0 && t <= t1) {
       if (t1 === t0) return v1
       const frac = (t - t0) / (t1 - t0)
@@ -249,22 +325,23 @@ function interpLinear(t, points) {
   return last[1]
 }
 
-function interpLog(t, points) {
+function interpLog(t: number, points: Point[]): number {
   const EPS = 1e-6
-  if (t <= points[0][0]) return Math.max(points[0][1], EPS)
-  const last = points[points.length - 1]
+  const first = points[0] ?? [0, EPS]
+  if (t <= first[0]) return Math.max(first[1], EPS)
+  const last = points[points.length - 1] ?? first
   if (t >= last[0]) return Math.max(last[1], EPS)
   for (let k = 0; k < points.length - 1; k++) {
-    const t0 = points[k][0]
-    let v0 = points[k][1]
-    const t1 = points[k + 1][0]
-    let v1 = points[k + 1][1]
+    const [t0, initialV0] = points[k] ?? first
+    const [t1, initialV1] = points[k + 1] ?? last
+    let v0 = initialV0
+    let v1 = initialV1
     if (t >= t0 && t <= t1) {
       if (t1 === t0) return Math.max(v1, EPS)
       const frac = (t - t0) / (t1 - t0)
       v0 = Math.max(v0, EPS)
       v1 = Math.max(v1, EPS)
-      return v0 * Math.pow(v1 / v0, frac)
+      return v0 * (v1 / v0) ** frac
     }
   }
   return Math.max(last[1], EPS)
@@ -274,13 +351,13 @@ function interpLog(t, points) {
 // ゆらぎ（jitter）適用 — synth.py apply_jitter の乗算的・キーごとの移植
 // ---------------------------------------------------------------------------
 
-function jitterFactor(jitter, key) {
-  const spread = (jitter && jitter[key]) || 0
+function jitterFactor(jitter: Jitter, key: keyof Jitter): number {
+  const spread = jitter[key] || 0
   if (!spread) return 1
   return 1 + (Math.random() * 2 - 1) * spread
 }
 
-function applyJitter(recipe) {
+function applyJitter(recipe: Recipe): Recipe {
   const r = deepClone(recipe)
   const j = recipe.jitter || {}
 
@@ -297,7 +374,7 @@ function applyJitter(recipe) {
   if (r.noise) {
     r.noise.mix = clamp01(r.noise.mix * jitterFactor(j, 'noiseMix'))
     const cutoffFactor = jitterFactor(j, 'noiseCutoff')
-    r.noise.cutoff = r.noise.cutoff * cutoffFactor
+    r.noise.cutoff = (r.noise.cutoff ?? 1000) * cutoffFactor
     r.noise.cutoffEnd = (r.noise.cutoffEnd ?? r.noise.cutoff) * cutoffFactor
   }
 
@@ -313,9 +390,7 @@ function applyJitter(recipe) {
 
   const spreadA = j.ampGain || 0
   if (spreadA) {
-    r.amp = r.amp.map(([t, g]) =>
-      g === 0 ? [t, 0] : [t, clamp01(g * (1 + (Math.random() * 2 - 1) * spreadA))],
-    )
+    r.amp = r.amp.map(([t, g]) => (g === 0 ? [t, 0] : [t, clamp01(g * (1 + (Math.random() * 2 - 1) * spreadA))]))
   }
 
   return r
@@ -331,12 +406,13 @@ function applyJitter(recipe) {
 //   'quantize' -3dBFS ピーク正規化 + Int16 量子化
 // ---------------------------------------------------------------------------
 
-function buildJob(name) {
-  let recipe
-  let patternName = null
+function buildJob(name: CryName): GenerationJob {
+  let recipe: Recipe
+  let patternName: string | null = null
   if (name === 'startle') {
     const patterns = recipes.startle
-    const chosen = patterns[Math.floor(Math.random() * patterns.length)]
+    const chosen = patterns[Math.floor(Math.random() * patterns.length)] ?? patterns[0]
+    if (!chosen) throw new Error('empty startle recipe')
     patternName = chosen.name
     recipe = applyJitter(chosen)
   } else {
@@ -345,13 +421,13 @@ function buildJob(name) {
 
   const pitchPoints = [...recipe.pitch].sort((a, b) => a[0] - b[0])
   const ampPoints = [...recipe.amp].sort((a, b) => a[0] - b[0])
-  const harmonics = recipe.harmonics && recipe.harmonics.length ? recipe.harmonics : [1.0]
+  const harmonics = recipe.harmonics?.length ? recipe.harmonics : [1.0]
   let harmonicsNorm = 0
   for (const g of harmonics) harmonicsNorm += Math.abs(g)
   if (!harmonicsNorm) harmonicsNorm = 1.0
 
   let noiseMix = 0
-  let noiseCutoffPoints = null
+  let noiseCutoffPoints: Point[] | null = null
   if (recipe.noise && recipe.noise.mix > 0) {
     noiseMix = clamp01(recipe.noise.mix)
     const c0 = Math.max(1, recipe.noise.cutoff ?? 1000)
@@ -359,7 +435,7 @@ function buildJob(name) {
     noiseCutoffPoints = [
       [0, c0],
       [1, c1],
-    ]
+    ] as Point[]
   }
 
   const n = Math.max(1, Math.round((recipe.durationMs / 1000) * SAMPLE_RATE))
@@ -390,16 +466,16 @@ function buildJob(name) {
   }
 }
 
-function stepTonal(job, end) {
+function stepTonal(job: GenerationJob, end: number): void {
   for (; job.i < end; job.i++) {
     const i = job.i
     const t = job.n > 1 ? i / (job.n - 1) : 0
     let f0 = interpLog(t, job.pitchPoints)
 
-    if (job.vibrato && job.vibrato.cents) {
+    if (job.vibrato?.cents) {
       const timeS = i / SAMPLE_RATE
       const onset = job.vibrato.onset ?? 0
-      let vibEnv
+      let vibEnv: number
       if (timeS <= onset) {
         vibEnv = 0
       } else {
@@ -407,7 +483,7 @@ function stepTonal(job, end) {
         vibEnv = x * x * (3 - 2 * x) // smoothstep
       }
       const lfo = Math.sin(2 * Math.PI * (job.vibrato.hz ?? 5.0) * timeS)
-      f0 = f0 * Math.pow(2, ((job.vibrato.cents / 1200) * vibEnv * lfo))
+      f0 = f0 * 2 ** ((job.vibrato.cents / 1200) * vibEnv * lfo)
     }
 
     job.phase += (2 * Math.PI * f0) / SAMPLE_RATE
@@ -419,28 +495,28 @@ function stepTonal(job, end) {
     job.buf[i] = acc / job.harmonicsNorm
 
     if (job.noiseMix > 0) {
-      const fc = Math.min(interpLog(t, job.noiseCutoffPoints), SAMPLE_RATE * 0.45)
+      const fc = Math.min(interpLog(t, job.noiseCutoffPoints ?? [[0, 1000]]), SAMPLE_RATE * 0.45)
       const a = 1 - Math.exp((-2 * Math.PI * fc) / SAMPLE_RATE)
       const white = Math.random() * 2 - 1
       job.noisePrev = job.noisePrev + a * (white - job.noisePrev)
-      job.noiseRaw[i] = job.noisePrev
+      if (job.noiseRaw) job.noiseRaw[i] = job.noisePrev
       const abs = Math.abs(job.noisePrev)
       if (abs > job.noisePeak) job.noisePeak = abs
     }
   }
 }
 
-function stepMix(job, end) {
+function stepMix(job: GenerationJob, end: number): void {
   const mix = job.noiseMix
   const invNoisePeak = mix > 0 && job.noisePeak > 1e-9 ? 1 / job.noisePeak : 0
   for (; job.i < end; job.i++) {
     const i = job.i
     const t = job.n > 1 ? i / (job.n - 1) : 0
     const ampEnv = interpLinear(t, job.ampPoints)
-    const noiseNorm = mix > 0 ? job.noiseRaw[i] * invNoisePeak : 0
-    let sample = (1 - mix) * job.buf[i] + mix * noiseNorm
+    const noiseNorm = mix > 0 ? (job.noiseRaw?.[i] ?? 0) * invNoisePeak : 0
+    let sample = (1 - mix) * (job.buf[i] ?? 0) + mix * noiseNorm
 
-    if (job.tremolo && job.tremolo.depth) {
+    if (job.tremolo?.depth) {
       const timeS = i / SAMPLE_RATE
       const trem = 1 - (job.tremolo.depth * (1 - Math.cos(2 * Math.PI * (job.tremolo.hz ?? 5.0) * timeS))) / 2
       sample *= trem
@@ -453,16 +529,16 @@ function stepMix(job, end) {
   }
 }
 
-function stepQuantize(job, end) {
+function stepQuantize(job: GenerationJob, end: number): void {
   for (; job.i < end; job.i++) {
-    let v = job.buf[job.i] * job.scale
+    let v = (job.buf[job.i] ?? 0) * job.scale
     if (v > 1) v = 1
     else if (v < -1) v = -1
-    job.pcm[job.i] = Math.round(v * 32767)
+    if (job.pcm) job.pcm[job.i] = Math.round(v * 32767)
   }
 }
 
-function stepChunk() {
+function stepChunk(): void {
   const job = currentJob
   if (!job) return
   const end = Math.min(job.n, job.i + CHUNK_SAMPLES)
@@ -493,7 +569,8 @@ function stepChunk() {
   Timer.set(stepChunk, CHUNK_TICK_MS)
 }
 
-function finishJob(job) {
+function finishJob(job: GenerationJob): void {
+  if (!job.pcm) throw new Error('generation finished without PCM')
   const elapsedMs = Time.ticks - job.startedAt
   cache[job.name] = { pcm: job.pcm, patternName: job.patternName }
   const label = job.patternName ? `${job.name}/${job.patternName}` : job.name
@@ -502,10 +579,11 @@ function finishJob(job) {
   pump()
 }
 
-function pump() {
+function pump(): void {
   if (currentJob || !queue.length) return
   const name = queue.shift()
   try {
+    if (!name) return
     currentJob = buildJob(name)
   } catch (error) {
     trace(`[cry] gen ${name} failed: ${error}\n`)
@@ -516,7 +594,7 @@ function pump() {
   Timer.set(stepChunk, CHUNK_TICK_MS)
 }
 
-function enqueueGeneration(name) {
+function enqueueGeneration(name: CryName): void {
   if (currentJob && currentJob.name === name) return
   if (queue.includes(name)) return
   queue.push(name)
@@ -555,7 +633,7 @@ const MIC_RESUME_DELAY_MS = 500
 // (書き込みエラーが続く異常系でも resumeCapture が確実に呼ばれることを保証する)。
 const CLOSE_FORCE_GRACE_MS = 2000
 
-function startPlayback(name, pcm, patternName) {
+function startPlayback(name: CryName, pcm: Int16Array, patternName: string | null): boolean {
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength)
   const total = bytes.byteLength
   let position = 0
@@ -570,13 +648,13 @@ function startPlayback(name, pcm, patternName) {
     trace(`[cry] suspendCapture failed: ${error}\n`)
   }
 
-  let out
+  let out: ClosableAudioOut
   try {
     out = new AudioOut({
       sampleRate: SAMPLE_RATE,
       bitsPerSample: 16,
       channels: 1,
-      onWritable(size) {
+      onWritable(size: number) {
         if (closed) return
         try {
           const use = Math.min(size, total - position)
@@ -589,8 +667,8 @@ function startPlayback(name, pcm, patternName) {
           closeOut()
         }
       },
-    })
-  } catch (error) {
+    }) as ClosableAudioOut
+  } catch {
     // I2S TX は1本のみ。robot.tone 等と衝突していれば開けない — 黙ってスキップする。
     // AudioOut は一度も open されていないので mic は即座に戻してよい。
     trace('[cry] busy, skipped\n')
@@ -602,9 +680,10 @@ function startPlayback(name, pcm, patternName) {
     return false
   }
 
-  const closeDeadline = Time.ticks + total / BYTES_PER_SAMPLE / SAMPLE_RATE * 1000 + PLAYBACK_CLOSE_MARGIN_MS + CLOSE_FORCE_GRACE_MS
+  const closeDeadline =
+    Time.ticks + (total / BYTES_PER_SAMPLE / SAMPLE_RATE) * 1000 + PLAYBACK_CLOSE_MARGIN_MS + CLOSE_FORCE_GRACE_MS
 
-  function closeOut() {
+  function closeOut(): void {
     if (closed) return
     if (position < total && Time.ticks < closeDeadline) {
       // まだ書き切っていない（Timer 遅延等）。少し待って再確認する。
@@ -666,7 +745,7 @@ function startPlayback(name, pcm, patternName) {
 // ---------------------------------------------------------------------------
 
 /** 起動時に一度呼ぶ。全音の初回生成をキューに積む（自動発火はしない）。 */
-export function initCry() {
+export function initCry(): void {
   if (started) return
   started = true
   loadPersistedRecipes()
@@ -674,12 +753,17 @@ export function initCry() {
   trace('[cry] init, queued generation for all voices\n')
 }
 
-function loadPersistedRecipes() {
+function loadPersistedRecipes(): void {
   for (const name of CRY_NAMES) {
     try {
       const raw = Preference.get(PREF_DOMAIN, PREF_KEYS[name])
       if (!raw) continue
-      recipes[name] = JSON.parse(raw)
+      const saved = JSON.parse(String(raw)) as unknown
+      if (name === 'startle') {
+        if (Array.isArray(saved) && saved.length > 0 && saved.every(isRecipe)) recipes.startle = saved
+      } else if (isRecipe(saved)) {
+        recipes[name] = saved
+      }
     } catch (error) {
       trace(`[cry] recipe restore failed for ${name}: ${error}\n`)
     }
@@ -696,22 +780,24 @@ export function getRecipes() {
  * Preference へ永続化し、該当キャッシュを無効化して再生成を積む。
  * 戻り値は実際に更新できた name の配列。
  */
-export function setRecipes(partial) {
-  const updated = []
+export function setRecipes(partial: unknown): CryName[] {
+  const updated: CryName[] = []
   if (!partial || typeof partial !== 'object') return updated
+  const candidates = partial as Record<string, unknown>
 
-  for (const name of Object.keys(partial)) {
-    if (!CRY_NAMES.includes(name)) continue
-    const value = partial[name]
+  for (const name of Object.keys(candidates)) {
+    if (!isCryName(name)) continue
+    const value = candidates[name]
 
     if (name === 'startle') {
       if (!Array.isArray(value) || !value.length) continue
-      if (!value.every((p) => p && Array.isArray(p.pitch) && Array.isArray(p.amp))) continue
+      if (!value.every(isRecipe)) continue
+      recipes.startle = value
     } else {
-      if (!value || !Array.isArray(value.pitch) || !Array.isArray(value.amp)) continue
+      if (!isRecipe(value)) continue
+      recipes[name] = value
     }
 
-    recipes[name] = value
     try {
       Preference.set(PREF_DOMAIN, PREF_KEYS[name], JSON.stringify(value))
     } catch (error) {
@@ -729,8 +815,8 @@ export function setRecipes(partial) {
  * 試し鳴き（POST /cry/<name>）。キャッシュ済みバッファを即再生し、次の変奏を
  * 裏で生成し直す。キャッシュ未完成・再生不可（I2S busy）の場合は ok:false。
  */
-export function playCry(name) {
-  if (!CRY_NAMES.includes(name)) return { ok: false, name, error: 'unknown_name' }
+export function playCry(name: string) {
+  if (!isCryName(name)) return { ok: false, name, error: 'unknown_name' }
 
   const entry = cache[name]
   if (!entry) {

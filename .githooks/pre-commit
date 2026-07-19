@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+echo "[pre-commit] running Biome and strict breath TypeScript checks"
+npm --prefix stack-chan/firmware run check:breath
+git diff --check --cached

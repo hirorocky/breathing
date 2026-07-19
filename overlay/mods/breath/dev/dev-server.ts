@@ -1,33 +1,45 @@
-import HTTPServer from 'embedded:network/http/server'
 import Listener from 'embedded:io/socket/listener'
-import OTA from 'embedded:update'
-import flash from 'embedded:storage/flash'
+import type { HTTPConnection, HTTPConnectionHandlers, HTTPRequest, HTTPResponse } from 'embedded:network/http/server'
+import HttpServer from 'embedded:network/http/server'
 import WebPage from 'embedded:network/http/server/options/webpage'
-import Timer from 'timer'
+import type { Flash } from 'embedded:storage/flash'
+import flash from 'embedded:storage/flash'
+import type { Updater } from 'embedded:update'
+import OTA from 'embedded:update'
+import type { CryName } from 'breath/cry'
+import { CRY_NAMES, getRecipes, playCry, setRecipes } from 'breath/cry'
+import {
+  forceNightMode,
+  forceVoiceActive,
+  getEmotion,
+  getEmotionParams,
+  pushTouch,
+  setEmotionParams,
+  setEmotionState,
+  startValenceDrift,
+  triggerRecoveryBoost,
+  triggerSleepFlutter,
+} from 'breath/emotion'
+import { getLedStatus, setLedParams, setLedSingle, startLedSweep, testLed } from 'breath/led'
+import { deferGaze, getParams, requestDeepBreath, setParams, triggerGaze } from 'breath/liveliness'
+import { getMicStatus, setMicParams } from 'breath/mic'
+import { getPostureStatus, setPostureParams, testPosture } from 'breath/posture'
+import { getReactParams, setReactParams, triggerStartle } from 'breath/reactions'
+import {
+  BREATH_POLICY_API_VERSION,
+  BREATH_POLICY_HOST_API_VERSION,
+  BREATH_POLICY_SCHEMA_VERSION,
+  setBreathPolicyDisabled,
+} from 'breath-policy-loader'
+import { readBatterySample } from 'm5stackchan/battery'
+import config from 'mc/config'
 import FFI from 'mc/ffi'
 import MDNS from 'mdns'
 import Net from 'net'
-import config from 'mc/config'
 import Time from 'time'
-import { readBatterySample } from 'm5stackchan/battery'
-import { CRY_NAMES, getRecipes, playCry, setRecipes } from 'breath/cry'
-import { getParams, setParams, requestDeepBreath, triggerGaze, deferGaze } from 'breath/liveliness'
-import { getMicStatus, setMicParams } from 'breath/mic'
-import { getReactParams, setReactParams, triggerStartle } from 'breath/reactions'
-import {
-  getEmotion,
-  setEmotionState,
-  pushTouch,
-  getEmotionParams,
-  setEmotionParams,
-  triggerSleepFlutter,
-  triggerRecoveryBoost,
-  forceVoiceActive,
-  forceNightMode,
-  startValenceDrift,
-} from 'breath/emotion'
-import { getLedStatus, setLedParams, testLed, setLedSingle, startLedSweep } from 'breath/led'
-import { getPostureStatus, setPostureParams, testPosture } from 'breath/posture'
+import Timer from 'timer'
+
+const breathConfig = config as typeof config & { buildId?: string; devToken?: string }
 
 /**
  * Wi-Fi 開発環境 Phase 1/2 — GET /status・PUT /ota + mDNS（v1.0.1 dev tools）。
@@ -54,8 +66,86 @@ const MDNS_HOST_NAME = 'stackchan'
 const HTTP_PORT = 80
 const RESTART_DELAY_MS = 1000
 const OTA_PROGRESS_BYTES = 1024 * 1024
+const POLICY_HEADER_BYTES = 8
+const POLICY_CANDIDATE_OFFSET = 0x15000
+const POLICY_MAX_BYTES = 0x14000
+const POLICY_MARKER_OFFSET = POLICY_CANDIDATE_OFFSET + POLICY_MAX_BYTES
+const POLICY_BUILD_ID_MAX_LENGTH = 128
+const POLICY_API_HEADER = 'x-policy-api-version'
+const POLICY_MIN_HOST_API_HEADER = 'x-policy-min-host-api-version'
+const POLICY_MAX_HOST_API_HEADER = 'x-policy-max-host-api-version'
+const POLICY_SCHEMA_HEADER = 'x-policy-schema-version'
+const POLICY_BUILD_ID_HEADER = 'x-policy-build-id'
 
-const Natives = new FFI()
+const Natives = new FFI() as unknown as { esp_restart(): void }
+
+type BreathGlobal = typeof globalThis & {
+  screen?: { touch?: unknown }
+  breathBootError?: string
+  breathBootId?: string
+  breathBootStartedAt?: number
+  breathPreviousBootCompleted?: boolean
+  breathLastHeartbeatMs?: number
+  breathDevHealthy?: boolean
+  breathDeployNoticeScheduled?: boolean
+  breathDeployNoticeShown?: boolean
+  breathDeployNoticeError?: string
+  breathPolicyState?: string
+  breathPolicyHostApiVersion?: number
+  breathPolicyBuildId?: string
+  breathPolicyLastError?: string
+  breathDbgGazeL?: number
+  breathDbgGazeR?: number
+  breathStatusSwipeBounds?: unknown
+  breathSettingsSwipeBounds?: unknown
+  breathStatusTouchCount?: number
+  breathSettingsTouchCount?: number
+  breathStatusLastDy?: number
+  breathSettingsLastDy?: number
+  breathStatusBarOpen?: boolean
+  breathSettingsBarOpen?: boolean
+  breathStatusShowCount?: number
+  breathSettingsShowCount?: number
+  breathSettingsAttachError?: string
+  breathPowerRawState?: unknown
+  breathPowerRawEventCount?: number
+  breathPowerLastKeyState?: unknown
+  breathPowerOnSource?: unknown
+  breathIntentionalOff?: boolean
+}
+
+const breathGlobal = globalThis as BreathGlobal
+
+interface DevConnection extends HTTPConnection {
+  byteLength: number
+  bytesReceived: number
+  bytesWritten: number
+  chunks: ArrayBuffer[]
+  data: ArrayBuffer
+  maxReadBytes: number
+  method: string
+  minReadBytes: number
+  nextProgressBytes: number
+  otaStartedAt: number
+  readCalls: number
+  sent: number
+  status: number
+  updater: Updater | null
+  writeCalls: number
+  writeMs: number
+  policyFlash: Flash | null
+  policyHeader: Uint8Array
+  policyHeaderBytes: number
+  policyBuildId: string
+}
+
+interface Route {
+  onRequest?(this: DevConnection, request: HTTPRequest): void
+  onReadable?(this: DevConnection, count: number): void
+  onResponse?(this: DevConnection, response: HTTPResponse): void
+  onWritable?(this: DevConnection, count: number): void
+  onError?(this: DevConnection, message?: unknown): void
+}
 
 function safeBattery() {
   try {
@@ -75,37 +165,56 @@ function safeIp() {
 
 function buildStatusPayload() {
   return {
-    buildId: config?.buildId ?? 'unknown',
+    buildId: breathConfig.buildId ?? 'unknown',
+    bootError: breathGlobal.breathBootError ?? null,
+    boot: {
+      id: breathGlobal.breathBootId ?? null,
+      startedAtMs: breathGlobal.breathBootStartedAt ?? null,
+      healthy: breathGlobal.breathDevHealthy ?? false,
+      lastHeartbeatMs: breathGlobal.breathLastHeartbeatMs ?? null,
+      previousCompleted: breathGlobal.breathPreviousBootCompleted ?? null,
+      deployNotice: {
+        scheduled: breathGlobal.breathDeployNoticeScheduled ?? false,
+        shown: breathGlobal.breathDeployNoticeShown ?? false,
+        error: breathGlobal.breathDeployNoticeError ?? null,
+      },
+    },
+    policy: {
+      state: breathGlobal.breathPolicyState ?? 'builtin',
+      hostApiVersion: breathGlobal.breathPolicyHostApiVersion ?? 1,
+      modBuildId: breathGlobal.breathPolicyBuildId ?? null,
+      lastError: breathGlobal.breathPolicyLastError ?? null,
+    },
     ip: safeIp(),
     battery: safeBattery(),
     uptimeMs: Time.ticks,
     // デバッグ計器(eye-cozmo が毎フレーム書く描画オフセット px。一瞥の符号バグ調査 2026-07-07)
-    dbgGaze: { l: globalThis.breathDbgGazeL ?? null, r: globalThis.breathDbgGazeR ?? null },
+    dbgGaze: { l: breathGlobal.breathDbgGazeL ?? null, r: breathGlobal.breathDbgGazeR ?? null },
     touchDebug: {
-      screenTouch: Boolean(globalThis.screen?.touch),
-      statusBounds: globalThis.breathStatusSwipeBounds ?? null,
-      settingsBounds: globalThis.breathSettingsSwipeBounds ?? null,
-      statusTouches: globalThis.breathStatusTouchCount ?? 0,
-      settingsTouches: globalThis.breathSettingsTouchCount ?? 0,
-      statusLastDy: globalThis.breathStatusLastDy ?? null,
-      settingsLastDy: globalThis.breathSettingsLastDy ?? null,
-      statusOpen: globalThis.breathStatusBarOpen ?? false,
-      settingsOpen: globalThis.breathSettingsBarOpen ?? false,
-      statusShows: globalThis.breathStatusShowCount ?? 0,
-      settingsShows: globalThis.breathSettingsShowCount ?? 0,
-      settingsAttachError: globalThis.breathSettingsAttachError ?? null,
-      powerRawState: globalThis.breathPowerRawState ?? null,
-      powerRawEvents: globalThis.breathPowerRawEventCount ?? 0,
-      powerLastKeyState: globalThis.breathPowerLastKeyState ?? null,
-      powerOnSource: globalThis.breathPowerOnSource ?? null,
-      intentionalOff: globalThis.breathIntentionalOff ?? null,
+      screenTouch: Boolean(breathGlobal.screen?.touch),
+      statusBounds: breathGlobal.breathStatusSwipeBounds ?? null,
+      settingsBounds: breathGlobal.breathSettingsSwipeBounds ?? null,
+      statusTouches: breathGlobal.breathStatusTouchCount ?? 0,
+      settingsTouches: breathGlobal.breathSettingsTouchCount ?? 0,
+      statusLastDy: breathGlobal.breathStatusLastDy ?? null,
+      settingsLastDy: breathGlobal.breathSettingsLastDy ?? null,
+      statusOpen: breathGlobal.breathStatusBarOpen ?? false,
+      settingsOpen: breathGlobal.breathSettingsBarOpen ?? false,
+      statusShows: breathGlobal.breathStatusShowCount ?? 0,
+      settingsShows: breathGlobal.breathSettingsShowCount ?? 0,
+      settingsAttachError: breathGlobal.breathSettingsAttachError ?? null,
+      powerRawState: breathGlobal.breathPowerRawState ?? null,
+      powerRawEvents: breathGlobal.breathPowerRawEventCount ?? 0,
+      powerLastKeyState: breathGlobal.breathPowerLastKeyState ?? null,
+      powerOnSource: breathGlobal.breathPowerOnSource ?? null,
+      intentionalOff: breathGlobal.breathIntentionalOff ?? null,
     },
   }
 }
 
-function isAuthorized(request) {
+function isAuthorized(request: HTTPRequest): boolean {
   const token = request.headers.get('x-dev-token')
-  return !!config?.devToken && token === config.devToken
+  return !!breathConfig.devToken && token === breathConfig.devToken
 }
 
 const notFound = {
@@ -114,10 +223,10 @@ const notFound = {
 }
 
 /** GET /status。ボディは毎リクエストその場で組み立てる（route ではなく connection に持たせる）。 */
-const statusRoute = {
+const statusRoute: Route = {
   onRequest(request) {
     this.sent = 0
-    if ('GET' !== request.method) {
+    if (request.method !== 'GET') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -152,20 +261,37 @@ const statusRoute = {
   },
 }
 
+function writeOtaChunk(connection: DevConnection, bytes: ArrayBuffer): void {
+  const startedAt = Time.ticks
+  const updater = connection.updater
+  if (!updater) return
+  updater.write(bytes)
+  connection.writeMs += Time.ticks - startedAt
+  connection.writeCalls++
+  connection.bytesWritten += bytes.byteLength
+}
+
 /** PUT /ota。受信チャンクをその場で OTA パーティションへ書き込む。 */
-const otaRoute = {
+const otaRoute: Route = {
   onRequest(request) {
     this.bytesReceived = 0
-    this.byteLength = parseInt(request.headers.get('content-length') ?? '', 10)
+    this.bytesWritten = 0
+    this.byteLength = Number.parseInt(request.headers.get('content-length') ?? '', 10)
     this.nextProgressBytes = OTA_PROGRESS_BYTES
     this.updater = null
+    this.readCalls = 0
+    this.writeCalls = 0
+    this.writeMs = 0
+    this.minReadBytes = Number.MAX_SAFE_INTEGER
+    this.maxReadBytes = 0
+    this.otaStartedAt = Time.ticks
 
     if (!isAuthorized(request)) {
       this.status = 401
       trace('[dev] ota rejected: bad or missing x-dev-token\n')
       return
     }
-    if ('PUT' !== request.method) {
+    if (request.method !== 'PUT') {
       this.status = 405
       return
     }
@@ -187,7 +313,7 @@ const otaRoute = {
   onReadable(_count) {
     // 認証/オープン失敗時も含め、必ず読み切って state machine を進める
     // （読まないと HTTP レスポンスに進めず接続がハングする）。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       // HTTPServer の公式 OTA 例と同じく、通知された count を socket read の
       // 引数にせず、HTTP body として現在読めるチャンクを取得する。
@@ -197,9 +323,12 @@ const otaRoute = {
       this.status = 500
       return
     }
-    if (200 !== this.status || !this.updater || !bytes) return
+    if (this.status !== 200 || !this.updater || !bytes) return
     try {
-      this.updater.write(bytes)
+      this.readCalls++
+      this.minReadBytes = Math.min(this.minReadBytes, bytes.byteLength)
+      this.maxReadBytes = Math.max(this.maxReadBytes, bytes.byteLength)
+      writeOtaChunk(this, bytes)
       this.bytesReceived += bytes.byteLength
       if (this.bytesReceived >= this.nextProgressBytes) {
         trace(`[dev] ota progress: ${this.bytesReceived}/${this.byteLength}\n`)
@@ -217,12 +346,12 @@ const otaRoute = {
     }
   },
   onResponse(response) {
-    if (200 === this.status && this.bytesReceived !== this.byteLength) {
+    if (this.status === 200 && this.bytesReceived !== this.byteLength) {
       trace(`[dev] ota size mismatch: ${this.bytesReceived}/${this.byteLength}\n`)
       this.status = 400
     }
 
-    if (200 === this.status && this.updater) {
+    if (this.status === 200 && this.updater) {
       try {
         this.updater.complete()
         this.updater.close()
@@ -248,8 +377,18 @@ const otaRoute = {
       this.updater = null
       trace(`[dev] ota cancelled (status=${this.status})\n`)
     }
+    const elapsedMs = Time.ticks - this.otaStartedAt
+    const minReadBytes = this.readCalls ? this.minReadBytes : 0
+    trace(
+      `[dev] ota metrics: elapsed=${elapsedMs}ms readCalls=${this.readCalls} readBytes=${minReadBytes}..${this.maxReadBytes} writeCalls=${this.writeCalls} writeMs=${this.writeMs} bytesWritten=${this.bytesWritten}\n`,
+    )
     response.status = this.status
     response.headers.set('content-length', 0)
+    response.headers.set('x-ota-elapsed-ms', elapsedMs)
+    response.headers.set('x-ota-read-calls', this.readCalls)
+    response.headers.set('x-ota-read-bytes', `${minReadBytes}-${this.maxReadBytes}`)
+    response.headers.set('x-ota-write-calls', this.writeCalls)
+    response.headers.set('x-ota-write-ms', this.writeMs)
     this.respond(response)
   },
   onError(message) {
@@ -265,14 +404,263 @@ const otaRoute = {
   },
 }
 
+function readUint32BE(bytes: Uint8Array, offset: number): number {
+  return (
+    (bytes[offset] ?? 0) * 0x1000000 +
+    (bytes[offset + 1] ?? 0) * 0x10000 +
+    (bytes[offset + 2] ?? 0) * 0x100 +
+    (bytes[offset + 3] ?? 0)
+  )
+}
+
+function closePolicyFlash(connection: DevConnection): void {
+  try {
+    connection.policyFlash?.close()
+  } catch (_error) {
+    // Flash close failure must not abort the HTTP state machine.
+  }
+  connection.policyFlash = null
+}
+
+function preparePolicyFlash(connection: DevConnection): void {
+  const header = connection.policyHeader
+  const declaredSize = readUint32BE(header, 0)
+  const hasSignature =
+    header[4] === 'X'.charCodeAt(0) &&
+    header[5] === 'S'.charCodeAt(0) &&
+    header[6] === '_'.charCodeAt(0) &&
+    header[7] === 'A'.charCodeAt(0)
+  if (!hasSignature || declaredSize !== connection.byteLength || declaredSize < POLICY_HEADER_BYTES)
+    throw new RangeError('invalid XS_A header or declared size')
+
+  const partition = flash.open({ path: 'xs', mode: 'r+' })
+  connection.policyFlash = partition
+  const status = partition.status()
+  if (declaredSize > POLICY_MAX_BYTES || POLICY_MARKER_OFFSET + 0x1000 > status.size) {
+    throw new RangeError(`policy archive too large: ${declaredSize}/${POLICY_MAX_BYTES}`)
+  }
+  const eraseBlocks = Math.ceil(POLICY_MAX_BYTES / status.blockLength)
+  partition.eraseBlock(POLICY_CANDIDATE_OFFSET / status.blockLength, eraseBlocks)
+  connection.bytesWritten = 0
+}
+
+function verifyPolicyHeader(connection: DevConnection): void {
+  const actual = new Uint8Array(
+    connection.policyFlash?.read(POLICY_HEADER_BYTES, POLICY_CANDIDATE_OFFSET) ?? new ArrayBuffer(0),
+  )
+  if (actual.byteLength !== POLICY_HEADER_BYTES) throw new Error('policy header read-back failed')
+  for (let index = 0; index < POLICY_HEADER_BYTES; index++) {
+    if (actual[index] !== connection.policyHeader[index]) throw new Error('policy header read-back mismatch')
+  }
+}
+
+function writeAndVerifyPolicyBody(connection: DevConnection, bytes: Uint8Array): void {
+  const partition = connection.policyFlash
+  if (!partition) throw new Error('policy flash is not open')
+  const offset = POLICY_CANDIDATE_OFFSET + POLICY_HEADER_BYTES + connection.bytesWritten
+  partition.write(bytes, offset)
+  const actual = new Uint8Array(partition.read(bytes.byteLength, offset))
+  if (actual.byteLength !== bytes.byteLength) throw new Error('policy body read-back failed')
+  for (let index = 0; index < bytes.byteLength; index++) {
+    if (actual[index] !== bytes[index]) throw new Error(`policy body read-back mismatch at ${offset + index}`)
+  }
+  connection.bytesWritten += bytes.byteLength
+}
+
+function invalidatePolicyArchive(connection: DevConnection): void {
+  try {
+    const status = connection.policyFlash?.status()
+    if (status)
+      connection.policyFlash?.eraseBlock(
+        POLICY_CANDIDATE_OFFSET / status.blockLength,
+        Math.ceil(POLICY_MAX_BYTES / status.blockLength),
+      )
+  } catch (_error) {
+    // The disabled preference remains set even if invalidation itself fails.
+  }
+}
+
+function writePolicyActivationMarker(connection: DevConnection): void {
+  const partition = connection.policyFlash
+  if (!partition) throw new Error('policy flash is not open')
+  const status = partition.status()
+  partition.eraseBlock(POLICY_MARKER_OFFSET / status.blockLength)
+  const marker = new Uint8Array(256)
+  marker.fill(0xff)
+  marker.set([0x42, 0x50, 0x43, 0x31])
+  const build = ArrayBuffer.fromString(connection.policyBuildId)
+  marker.set(new Uint8Array(build).subarray(0, 128), 4)
+  partition.write(marker, POLICY_MARKER_OFFSET)
+}
+
+/** Authenticated raw XSA install/disable. Failed and interrupted writes remain disabled. */
+const policyRoute: Route = {
+  onRequest(request) {
+    this.method = request.method
+    this.status = 200
+    this.byteLength = Number.parseInt(request.headers.get('content-length') ?? '', 10)
+    this.bytesReceived = 0
+    this.bytesWritten = 0
+    this.policyFlash = null
+    this.policyHeader = new Uint8Array(POLICY_HEADER_BYTES)
+    this.policyHeaderBytes = 0
+    this.policyBuildId = ''
+
+    if (!isAuthorized(request)) {
+      this.status = 401
+      trace('[dev] policy rejected: bad or missing x-dev-token\n')
+      return
+    }
+    if (request.method !== 'PUT' && request.method !== 'DELETE') {
+      this.status = 405
+      return
+    }
+
+    if (request.method === 'DELETE') return
+    if (breathGlobal.breathPolicyState !== 'disabled') {
+      this.status = 409
+      trace('[dev] policy update rejected: disable and reboot before replacing the archive\n')
+      return
+    }
+
+    const apiVersion = Number.parseInt(request.headers.get(POLICY_API_HEADER) ?? '', 10)
+    const minHostApiVersion = Number.parseInt(request.headers.get(POLICY_MIN_HOST_API_HEADER) ?? '', 10)
+    const maxHostApiVersion = Number.parseInt(request.headers.get(POLICY_MAX_HOST_API_HEADER) ?? '', 10)
+    const schemaVersion = Number.parseInt(request.headers.get(POLICY_SCHEMA_HEADER) ?? '', 10)
+    const buildId = request.headers.get(POLICY_BUILD_ID_HEADER) ?? ''
+    if (
+      apiVersion !== BREATH_POLICY_API_VERSION ||
+      schemaVersion !== BREATH_POLICY_SCHEMA_VERSION ||
+      !Number.isInteger(minHostApiVersion) ||
+      !Number.isInteger(maxHostApiVersion) ||
+      minHostApiVersion < 1 ||
+      minHostApiVersion > maxHostApiVersion ||
+      minHostApiVersion > BREATH_POLICY_HOST_API_VERSION ||
+      maxHostApiVersion < BREATH_POLICY_HOST_API_VERSION
+    ) {
+      this.status = 409
+      trace(
+        `[dev] policy incompatible: api=${apiVersion} schema=${schemaVersion} host=${minHostApiVersion}..${maxHostApiVersion}\n`,
+      )
+      return
+    }
+    if (!buildId || buildId.length > POLICY_BUILD_ID_MAX_LENGTH) {
+      this.status = 400
+      trace(`[dev] policy rejected: api=${apiVersion} schema=${schemaVersion} build=${buildId}\n`)
+      return
+    }
+    if (!Number.isFinite(this.byteLength) || this.byteLength < POLICY_HEADER_BYTES) {
+      this.status = 411
+      trace('[dev] policy rejected: valid content-length required\n')
+      return
+    }
+    this.policyBuildId = buildId
+  },
+  onReadable(_count) {
+    let bytes: ArrayBuffer | undefined
+    try {
+      bytes = this.read()
+    } catch (error) {
+      this.status = 500
+      trace(`[dev] policy read failed: ${error}\n`)
+      return
+    }
+    if (!bytes) return
+    this.bytesReceived += bytes.byteLength
+    if (this.method !== 'PUT' || this.status !== 200) return
+    if (this.bytesReceived > this.byteLength) {
+      this.status = 400
+      closePolicyFlash(this)
+      trace(`[dev] policy body exceeds content-length: ${this.bytesReceived}/${this.byteLength}\n`)
+      return
+    }
+
+    const chunk = new Uint8Array(bytes)
+    let chunkOffset = 0
+    try {
+      if (!this.policyFlash) {
+        const needed = POLICY_HEADER_BYTES - this.policyHeaderBytes
+        const take = Math.min(needed, chunk.byteLength)
+        this.policyHeader.set(chunk.subarray(0, take), this.policyHeaderBytes)
+        this.policyHeaderBytes += take
+        chunkOffset = take
+        if (this.policyHeaderBytes < POLICY_HEADER_BYTES) return
+        preparePolicyFlash(this)
+      }
+      if (chunkOffset < chunk.byteLength) {
+        const remainder = chunk.subarray(chunkOffset)
+        writeAndVerifyPolicyBody(this, remainder)
+      }
+    } catch (error) {
+      this.status = error instanceof RangeError ? 400 : 500
+      closePolicyFlash(this)
+      trace(`[dev] policy write failed: ${error}\n`)
+    }
+  },
+  onResponse(response) {
+    if (this.method === 'DELETE' && this.status === 200) {
+      try {
+        setBreathPolicyDisabled(true)
+        this.status = 202
+        trace('[dev] policy disabled, restarting\n')
+        Timer.set(() => Natives.esp_restart(), RESTART_DELAY_MS)
+      } catch (error) {
+        this.status = 500
+        trace(`[dev] policy disable failed: ${error}\n`)
+      }
+    } else if (this.method === 'PUT' && this.status === 200) {
+      if (
+        this.bytesReceived !== this.byteLength ||
+        this.bytesWritten !== this.byteLength - POLICY_HEADER_BYTES ||
+        this.policyHeaderBytes !== POLICY_HEADER_BYTES
+      ) {
+        this.status = 400
+        trace(
+          `[dev] policy size mismatch: received=${this.bytesReceived} written=${this.bytesWritten}/${this.byteLength}\n`,
+        )
+      } else {
+        try {
+          this.policyFlash?.write(this.policyHeader, POLICY_CANDIDATE_OFFSET)
+          verifyPolicyHeader(this)
+          writePolicyActivationMarker(this)
+          setBreathPolicyDisabled(false)
+          closePolicyFlash(this)
+          this.status = 202
+          trace(`[dev] policy installed build=${this.policyBuildId}, restarting\n`)
+          Timer.set(() => Natives.esp_restart(), RESTART_DELAY_MS)
+        } catch (error) {
+          this.status = 500
+          invalidatePolicyArchive(this)
+          try {
+            setBreathPolicyDisabled(true)
+          } catch (_disableError) {
+            // Already disabled at update start; keep processing the HTTP response.
+          }
+          trace(`[dev] policy enable failed: ${error}\n`)
+        }
+      }
+    }
+
+    if (this.status !== 200) closePolicyFlash(this)
+    response.status = this.status
+    response.headers.set('content-length', 0)
+    if (this.policyBuildId) response.headers.set(POLICY_BUILD_ID_HEADER, this.policyBuildId)
+    this.respond(response)
+  },
+  onError(message) {
+    closePolicyFlash(this)
+    trace(`[dev] policy connection error: ${message}\n`)
+  },
+}
+
 /** GET /cry/recipes・PUT /cry/recipes（要 x-dev-token）。本体は小さい JSON なので溜めてから処理する。 */
-const cryRecipesRoute = {
+const cryRecipesRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('GET' === request.method) {
+    if (request.method === 'GET') {
       try {
         this.status = 200
         this.data = ArrayBuffer.fromString(JSON.stringify(getRecipes()))
@@ -281,13 +669,13 @@ const cryRecipesRoute = {
         this.status = 500
         this.data = ArrayBuffer.fromString('')
       }
-    } else if ('PUT' === request.method) {
-      if (!isAuthorized(request)) {
+    } else if (request.method === 'PUT') {
+      if (isAuthorized(request)) {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      } else {
         this.status = 401
         this.data = ArrayBuffer.fromString('')
         trace('[dev] cry recipes rejected: bad or missing x-dev-token\n')
-      } else {
-        this.status = 200 // 本文を読み終えてから onResponse で確定する
       }
     } else {
       this.status = 405
@@ -296,7 +684,7 @@ const cryRecipesRoute = {
   },
   onReadable(count) {
     // 認証失敗時も含め、必ず読み切って state machine を進める（otaRoute と同じ理由）。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -304,10 +692,10 @@ const cryRecipesRoute = {
       this.status = 500
       return
     }
-    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+    if (this.method === 'PUT' && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if ('PUT' === this.method && 200 === this.status) {
+    if (this.method === 'PUT' && this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -351,13 +739,13 @@ const cryRecipesRoute = {
  * (Loop B の心臓部)。本体は小さい JSON なので溜めてから処理する
  * (cryRecipesRoute と同型)。
  */
-const paramsRoute = {
+const paramsRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('GET' === request.method) {
+    if (request.method === 'GET') {
       try {
         this.status = 200
         this.data = ArrayBuffer.fromString(JSON.stringify(getParams()))
@@ -366,13 +754,13 @@ const paramsRoute = {
         this.status = 500
         this.data = ArrayBuffer.fromString('')
       }
-    } else if ('PUT' === request.method) {
-      if (!isAuthorized(request)) {
+    } else if (request.method === 'PUT') {
+      if (isAuthorized(request)) {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      } else {
         this.status = 401
         this.data = ArrayBuffer.fromString('')
         trace('[dev] params rejected: bad or missing x-dev-token\n')
-      } else {
-        this.status = 200 // 本文を読み終えてから onResponse で確定する
       }
     } else {
       this.status = 405
@@ -381,7 +769,7 @@ const paramsRoute = {
   },
   onReadable(count) {
     // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -389,10 +777,10 @@ const paramsRoute = {
       this.status = 500
       return
     }
-    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+    if (this.method === 'PUT' && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if ('PUT' === this.method && 200 === this.status) {
+    if (this.method === 'PUT' && this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -436,13 +824,13 @@ const paramsRoute = {
  * PUT /mic/params（要 x-dev-token、部分更新）。v1.1.0 Phase 3a マイク観測基盤。
  * 本体は小さい JSON なので溜めてから処理する（paramsRoute と同型）。
  */
-const micRoute = {
+const micRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('GET' === request.method) {
+    if (request.method === 'GET') {
       try {
         this.status = 200
         this.data = ArrayBuffer.fromString(JSON.stringify(getMicStatus()))
@@ -484,19 +872,19 @@ const micRoute = {
   },
 }
 
-const micParamsRoute = {
+const micParamsRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('PUT' === request.method) {
-      if (!isAuthorized(request)) {
+    if (request.method === 'PUT') {
+      if (isAuthorized(request)) {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      } else {
         this.status = 401
         this.data = ArrayBuffer.fromString('')
         trace('[dev] mic params rejected: bad or missing x-dev-token\n')
-      } else {
-        this.status = 200 // 本文を読み終えてから onResponse で確定する
       }
     } else {
       this.status = 405
@@ -505,7 +893,7 @@ const micParamsRoute = {
   },
   onReadable(count) {
     // 認証失敗時も含め、必ず読み切って state machine を進める（otaRoute と同じ理由）。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -513,10 +901,10 @@ const micParamsRoute = {
       this.status = 500
       return
     }
-    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+    if (this.method === 'PUT' && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if ('PUT' === this.method && 200 === this.status) {
+    if (this.method === 'PUT' && this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -559,10 +947,10 @@ const micParamsRoute = {
  * GET /react。reactions(v1.1.0 Phase 3c #1 — startle + 方向つき一瞥)の現在パラメータ。
  * 本体は小さい JSON なので溜めてから処理する(paramsRoute と同型)。
  */
-const reactRoute = {
+const reactRoute: Route = {
   onRequest(request) {
     this.sent = 0
-    if ('GET' !== request.method) {
+    if (request.method !== 'GET') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -605,19 +993,19 @@ const reactRoute = {
 }
 
 /** PUT /react/params(要 x-dev-token)。部分更新(paramsRoute の PUT 分岐と同型)。 */
-const reactParamsRoute = {
+const reactParamsRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('PUT' === request.method) {
-      if (!isAuthorized(request)) {
+    if (request.method === 'PUT') {
+      if (isAuthorized(request)) {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      } else {
         this.status = 401
         this.data = ArrayBuffer.fromString('')
         trace('[dev] react params rejected: bad or missing x-dev-token\n')
-      } else {
-        this.status = 200 // 本文を読み終えてから onResponse で確定する
       }
     } else {
       this.status = 405
@@ -626,7 +1014,7 @@ const reactParamsRoute = {
   },
   onReadable(count) {
     // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -634,10 +1022,10 @@ const reactParamsRoute = {
       this.status = 500
       return
     }
-    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+    if (this.method === 'PUT' && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if ('PUT' === this.method && 200 === this.status) {
+    if (this.method === 'PUT' && this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -681,12 +1069,12 @@ const reactParamsRoute = {
  * ランダム)で拍手なしの目視テストを行う(Loop C / Phase 3c の心臓部)。本体は
  * 小さい JSON なので溜めてから処理する(cryRecipesRoute の PUT 分岐と同型)。
  */
-const reactStartleRoute = {
+const reactStartleRoute: Route = {
   onRequest(request) {
     this.sent = 0
     this.chunks = []
 
-    if ('POST' !== request.method) {
+    if (request.method !== 'POST') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -701,7 +1089,7 @@ const reactStartleRoute = {
   },
   onReadable(count) {
     // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -709,12 +1097,12 @@ const reactStartleRoute = {
       this.status = 500
       return
     }
-    if (200 === this.status && bytes) this.chunks.push(bytes)
+    if (this.status === 200 && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if (200 === this.status) {
+    if (this.status === 200) {
       try {
-        let dir
+        let dir: number | undefined
         if (this.chunks.length) {
           let total = 0
           for (const chunk of this.chunks) total += chunk.byteLength
@@ -726,11 +1114,12 @@ const reactStartleRoute = {
           }
           const text = String.fromArrayBuffer(merged.buffer)
           if (text.trim()) {
-            const body = JSON.parse(text)
-            dir = body?.dir
+            const body = JSON.parse(text) as unknown
+            if (typeof body === 'object' && body !== null && 'dir' in body && typeof body.dir === 'number')
+              dir = body.dir
           }
         }
-        const ok = triggerStartle(dir)
+        const ok = triggerStartle(dir ?? null)
         this.status = ok ? 200 : 503
         this.data = ArrayBuffer.fromString(JSON.stringify({ ok }))
       } catch (error) {
@@ -760,11 +1149,11 @@ const reactStartleRoute = {
 }
 
 /** POST /cry/<name>。キャッシュ済みバッファを即再生する（Loop A の心臓部）。 */
-function makeCryPlayRoute(name) {
+function makeCryPlayRoute(name: string): Route {
   return {
     onRequest(request) {
       this.sent = 0
-      if ('POST' !== request.method) {
+      if (request.method !== 'POST') {
         this.status = 405
         this.data = ArrayBuffer.fromString('')
         return
@@ -810,11 +1199,11 @@ function makeCryPlayRoute(name) {
 }
 
 /** POST /live/<action>。生存感エンジンのチューニング用即時トリガ(Loop B 用)。 */
-function makeLiveActionRoute(name, action) {
+function makeLiveActionRoute(name: string, action: () => boolean): Route {
   return {
     onRequest(request) {
       this.sent = 0
-      if ('POST' !== request.method) {
+      if (request.method !== 'POST') {
         this.status = 405
         this.data = ArrayBuffer.fromString('')
         return
@@ -896,9 +1285,9 @@ const SCENARIOS = [
   { id: 20, name: '場の共鳴' },
 ]
 
-let lastScenario = null // { id, name, t } — GET /emotion の scenarioLast
+let lastScenario: { id: number; name: string; t: number } | null = null // GET /emotion の scenarioLast
 
-function touchBurst(count, intervalMs) {
+function touchBurst(count: number, intervalMs: number): void {
   for (let i = 0; i < count; i++) {
     Timer.set(() => {
       try {
@@ -910,7 +1299,7 @@ function touchBurst(count, intervalMs) {
   }
 }
 
-function gazeBurst(count, intervalMs) {
+function gazeBurst(count: number, intervalMs: number): void {
   for (let i = 0; i < count; i++) {
     Timer.set(() => {
       try {
@@ -927,7 +1316,7 @@ function gazeBurst(count, intervalMs) {
  * 実際の質感確認はユーザーに委ねる(合格ラインはクラッシュ・再起動がないこと)。
  * 未知の id は false を返す(呼び出し側で 400 にする)。
  */
-function runScenario(id) {
+function runScenario(id: number): boolean {
   switch (id) {
     case 1:
       setEmotionState(0.7, 0.3)
@@ -949,7 +1338,7 @@ function runScenario(id) {
       setEmotionState(-0.6, 0.5)
       return true
     case 7:
-      triggerStartle() // 状態はそのまま(reactions の startle を流用)
+      ;(triggerStartle as (direction?: number) => void)() // 状態はそのまま(reactions の startle を流用)
       return true
     case 8:
       setEmotionState(0.3, 0.4)
@@ -980,7 +1369,7 @@ function runScenario(id) {
       return true
     case 14:
       setEmotionState(0.3, 0.1)
-      forceVoiceActive(30000) // voiceActive 相当を 30 秒維持
+      forceVoiceActive(30_000) // voiceActive 相当を 30 秒維持
       return true
     case 15:
       setEmotionState(0.2, -0.5)
@@ -990,7 +1379,7 @@ function runScenario(id) {
       return true
     case 17:
       setEmotionState(0.1, 0)
-      forceNightMode(600000) // 夜間クランプを 10 分間強制
+      forceNightMode(600_000) // 夜間クランプを 10 分間強制
       return true
     case 18:
       triggerGaze() // 様子を見る一瞥
@@ -1008,7 +1397,7 @@ function runScenario(id) {
       setEmotionState(-0.8, -0.5)
       return true
     case 20:
-      startValenceDrift(0.002, 300000) // v ドリフト +0.02/10s を 5 分
+      startValenceDrift(0.002, 300_000) // v ドリフト +0.02/10s を 5 分
       return true
     default:
       return false
@@ -1020,10 +1409,10 @@ function buildEmotionPayload() {
 }
 
 /** GET /emotion。本体は小さい JSON なので溜めずにその場で組み立てる(statusRoute と同型)。 */
-const emotionRoute = {
+const emotionRoute: Route = {
   onRequest(request) {
     this.sent = 0
-    if ('GET' !== request.method) {
+    if (request.method !== 'GET') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1066,11 +1455,11 @@ const emotionRoute = {
 }
 
 /** PUT /emotion/state(要 x-dev-token)。body `{"v":0.5,"a":-0.3}`(cryRecipesRoute の PUT 分岐と同型)。 */
-const emotionStateRoute = {
+const emotionStateRoute: Route = {
   onRequest(request) {
     this.sent = 0
     this.chunks = []
-    if ('PUT' !== request.method) {
+    if (request.method !== 'PUT') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1084,7 +1473,7 @@ const emotionStateRoute = {
     this.status = 200
   },
   onReadable(count) {
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1092,10 +1481,10 @@ const emotionStateRoute = {
       this.status = 500
       return
     }
-    if (200 === this.status && bytes) this.chunks.push(bytes)
+    if (this.status === 200 && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if (200 === this.status) {
+    if (this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1135,13 +1524,13 @@ const emotionStateRoute = {
 }
 
 /** GET /emotion/params・PUT /emotion/params(要 x-dev-token)。paramsRoute と同型。 */
-const emotionParamsRoute = {
+const emotionParamsRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('GET' === request.method) {
+    if (request.method === 'GET') {
       try {
         this.status = 200
         this.data = ArrayBuffer.fromString(JSON.stringify(getEmotionParams()))
@@ -1150,13 +1539,13 @@ const emotionParamsRoute = {
         this.status = 500
         this.data = ArrayBuffer.fromString('')
       }
-    } else if ('PUT' === request.method) {
-      if (!isAuthorized(request)) {
+    } else if (request.method === 'PUT') {
+      if (isAuthorized(request)) {
+        this.status = 200
+      } else {
         this.status = 401
         this.data = ArrayBuffer.fromString('')
         trace('[dev] emotion params rejected: bad or missing x-dev-token\n')
-      } else {
-        this.status = 200
       }
     } else {
       this.status = 405
@@ -1164,7 +1553,7 @@ const emotionParamsRoute = {
     }
   },
   onReadable(count) {
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1172,10 +1561,10 @@ const emotionParamsRoute = {
       this.status = 500
       return
     }
-    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+    if (this.method === 'PUT' && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if ('PUT' === this.method && 200 === this.status) {
+    if (this.method === 'PUT' && this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1215,10 +1604,10 @@ const emotionParamsRoute = {
 }
 
 /** POST /emotion/touch(要 x-dev-token)。物理タッチ配線なしの代替(シナリオ11/12)。 */
-const emotionTouchRoute = {
+const emotionTouchRoute: Route = {
   onRequest(request) {
     this.sent = 0
-    if ('POST' !== request.method) {
+    if (request.method !== 'POST') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1268,11 +1657,11 @@ const emotionTouchRoute = {
 }
 
 /** POST /emotion/scenario(要 x-dev-token)。body `{"id": 1}`。GET /emotion/scenarios で一覧。 */
-const emotionScenarioRoute = {
+const emotionScenarioRoute: Route = {
   onRequest(request) {
     this.sent = 0
     this.chunks = []
-    if ('POST' !== request.method) {
+    if (request.method !== 'POST') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1286,7 +1675,7 @@ const emotionScenarioRoute = {
     this.status = 200
   },
   onReadable(count) {
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1294,10 +1683,10 @@ const emotionScenarioRoute = {
       this.status = 500
       return
     }
-    if (200 === this.status && bytes) this.chunks.push(bytes)
+    if (this.status === 200 && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if (200 === this.status) {
+    if (this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1311,7 +1700,7 @@ const emotionScenarioRoute = {
         const id = Number(body?.id)
         const entry = SCENARIOS.find((s) => s.id === id)
         const ok = entry ? runScenario(id) : false
-        if (ok) lastScenario = { id, name: entry.name, t: Time.ticks }
+        if (ok && entry) lastScenario = { id, name: entry.name, t: Time.ticks }
         this.status = ok ? 200 : 400
         this.data = ArrayBuffer.fromString(JSON.stringify({ ok, id, name: entry?.name }))
         trace(`[dev] emotion scenario ${id} (${entry?.name ?? 'unknown'}) -> ${ok ? 'ok' : 'failed'}\n`)
@@ -1342,10 +1731,10 @@ const emotionScenarioRoute = {
 }
 
 /** GET /emotion/scenarios。id と名前の一覧。 */
-const emotionScenariosRoute = {
+const emotionScenariosRoute: Route = {
   onRequest(request) {
     this.sent = 0
-    if ('GET' !== request.method) {
+    if (request.method !== 'GET') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1385,10 +1774,10 @@ const emotionScenariosRoute = {
  * GET /led。現在色・テスト中フラグ・params(v1.2.0 E2 — ヘッド LED の環境光)。
  * 本体は小さい JSON なので溜めずにその場で組み立てる(statusRoute/reactRoute と同型)。
  */
-const ledRoute = {
+const ledRoute: Route = {
   onRequest(request) {
     this.sent = 0
-    if ('GET' !== request.method) {
+    if (request.method !== 'GET') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1431,19 +1820,19 @@ const ledRoute = {
 }
 
 /** PUT /led/params(要 x-dev-token)。部分更新(micParamsRoute/reactParamsRoute と同型)。 */
-const ledParamsRoute = {
+const ledParamsRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('PUT' === request.method) {
-      if (!isAuthorized(request)) {
+    if (request.method === 'PUT') {
+      if (isAuthorized(request)) {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      } else {
         this.status = 401
         this.data = ArrayBuffer.fromString('')
         trace('[dev] led params rejected: bad or missing x-dev-token\n')
-      } else {
-        this.status = 200 // 本文を読み終えてから onResponse で確定する
       }
     } else {
       this.status = 405
@@ -1452,7 +1841,7 @@ const ledParamsRoute = {
   },
   onReadable(count) {
     // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1460,10 +1849,10 @@ const ledParamsRoute = {
       this.status = 500
       return
     }
-    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+    if (this.method === 'PUT' && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if ('PUT' === this.method && 200 === this.status) {
+    if (this.method === 'PUT' && this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1506,12 +1895,12 @@ const ledParamsRoute = {
  * POST /led/test(要 x-dev-token)。body `{"r":255,"g":0,"b":0,"ms":1000}` で直接点灯
  * テスト(reactStartleRoute と同型)。
  */
-const ledTestRoute = {
+const ledTestRoute: Route = {
   onRequest(request) {
     this.sent = 0
     this.chunks = []
 
-    if ('POST' !== request.method) {
+    if (request.method !== 'POST') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1525,7 +1914,7 @@ const ledTestRoute = {
     this.status = 200 // 本文を読み終えてから onResponse で確定する
   },
   onReadable(count) {
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1533,10 +1922,10 @@ const ledTestRoute = {
       this.status = 500
       return
     }
-    if (200 === this.status && bytes) this.chunks.push(bytes)
+    if (this.status === 200 && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if (200 === this.status) {
+    if (this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1581,12 +1970,12 @@ const ledTestRoute = {
  * で単一 LED を生の物理 index で点灯(v1.2.1 E2.1 — 物理配置の目視特定用。
  * ledTestRoute と同型)。
  */
-const ledSetRoute = {
+const ledSetRoute: Route = {
   onRequest(request) {
     this.sent = 0
     this.chunks = []
 
-    if ('POST' !== request.method) {
+    if (request.method !== 'POST') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1600,7 +1989,7 @@ const ledSetRoute = {
     this.status = 200 // 本文を読み終えてから onResponse で確定する
   },
   onReadable(count) {
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1608,10 +1997,10 @@ const ledSetRoute = {
       this.status = 500
       return
     }
-    if (200 === this.status && bytes) this.chunks.push(bytes)
+    if (this.status === 200 && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if (200 === this.status) {
+    if (this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1656,12 +2045,12 @@ const ledSetRoute = {
  * index 0→11 を順に 1 個ずつ白点灯するデモ(v1.2.1 E2.1 — 物理配置の目視特定用)。
  * レスポンスは `{ok, totalMs}`。
  */
-const ledSweepRoute = {
+const ledSweepRoute: Route = {
   onRequest(request) {
     this.sent = 0
     this.chunks = []
 
-    if ('POST' !== request.method) {
+    if (request.method !== 'POST') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1675,7 +2064,7 @@ const ledSweepRoute = {
     this.status = 200 // 本文を読み終えてから onResponse で確定する
   },
   onReadable(count) {
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1683,10 +2072,10 @@ const ledSweepRoute = {
       this.status = 500
       return
     }
-    if (200 === this.status && bytes) this.chunks.push(bytes)
+    if (this.status === 200 && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if (200 === this.status) {
+    if (this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1731,10 +2120,10 @@ const ledSweepRoute = {
  * GET /posture(v1.3.0 E3 — サーボ解禁 + 感情姿勢)。現在パラメータ + 状態
  * (currentPitchDeg・moveInProgress・hasPoseApi・lastMoveAgoS)。reactRoute と同型。
  */
-const postureRoute = {
+const postureRoute: Route = {
   onRequest(request) {
     this.sent = 0
-    if ('GET' !== request.method) {
+    if (request.method !== 'GET') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1777,19 +2166,19 @@ const postureRoute = {
 }
 
 /** PUT /posture/params(要 x-dev-token)。部分更新(reactParamsRoute と同型)。 */
-const postureParamsRoute = {
+const postureParamsRoute: Route = {
   onRequest(request) {
     this.method = request.method
     this.sent = 0
     this.chunks = []
 
-    if ('PUT' === request.method) {
-      if (!isAuthorized(request)) {
+    if (request.method === 'PUT') {
+      if (isAuthorized(request)) {
+        this.status = 200 // 本文を読み終えてから onResponse で確定する
+      } else {
         this.status = 401
         this.data = ArrayBuffer.fromString('')
         trace('[dev] posture params rejected: bad or missing x-dev-token\n')
-      } else {
-        this.status = 200 // 本文を読み終えてから onResponse で確定する
       }
     } else {
       this.status = 405
@@ -1798,7 +2187,7 @@ const postureParamsRoute = {
   },
   onReadable(count) {
     // 認証失敗時も含め、必ず読み切って state machine を進める(otaRoute と同じ理由)。
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1806,10 +2195,10 @@ const postureParamsRoute = {
       this.status = 500
       return
     }
-    if ('PUT' === this.method && bytes) this.chunks.push(bytes)
+    if (this.method === 'PUT' && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if ('PUT' === this.method && 200 === this.status) {
+    if (this.method === 'PUT' && this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1852,12 +2241,12 @@ const postureParamsRoute = {
  * POST /posture/test(要 x-dev-token)。body `{"yawDeg":0,"pitchDeg":15,"time":1.0}` で
  * レート制限を無視した直接姿勢テスト(reactStartleRoute/ledTestRoute と同型)。
  */
-const postureTestRoute = {
+const postureTestRoute: Route = {
   onRequest(request) {
     this.sent = 0
     this.chunks = []
 
-    if ('POST' !== request.method) {
+    if (request.method !== 'POST') {
       this.status = 405
       this.data = ArrayBuffer.fromString('')
       return
@@ -1871,7 +2260,7 @@ const postureTestRoute = {
     this.status = 200 // 本文を読み終えてから onResponse で確定する
   },
   onReadable(count) {
-    let bytes
+    let bytes: ArrayBuffer | undefined
     try {
       bytes = this.read(count)
     } catch (error) {
@@ -1879,10 +2268,10 @@ const postureTestRoute = {
       this.status = 500
       return
     }
-    if (200 === this.status && bytes) this.chunks.push(bytes)
+    if (this.status === 200 && bytes) this.chunks.push(bytes)
   },
   onResponse(response) {
-    if (200 === this.status) {
+    if (this.status === 200) {
       try {
         let total = 0
         for (const chunk of this.chunks) total += chunk.byteLength
@@ -1922,9 +2311,10 @@ const postureTestRoute = {
   },
 }
 
-const router = new Map([
+const router = new Map<string, Route>([
   ['/status', statusRoute],
   ['/ota', otaRoute],
+  ['/policy', policyRoute],
   ['/cry/recipes', cryRecipesRoute],
   ['/params', paramsRoute],
   ['/mic', micRoute],
@@ -1951,50 +2341,61 @@ const router = new Map([
 const CRY_PLAY_PREFIX = '/cry/'
 const LIVE_ACTION_PREFIX = '/live/'
 
-function resolveRoute(path) {
-  if (router.has(path)) return router.get(path)
+function isCryName(value: string): value is CryName {
+  return (CRY_NAMES as readonly string[]).includes(value)
+}
+
+function isLiveAction(value: string): value is keyof typeof LIVE_ACTIONS {
+  return value in LIVE_ACTIONS
+}
+
+function resolveRoute(path: string): Route {
+  const exactRoute = router.get(path)
+  if (exactRoute) return exactRoute
   if (path.startsWith(CRY_PLAY_PREFIX)) {
     const name = path.slice(CRY_PLAY_PREFIX.length)
-    if (CRY_NAMES.includes(name)) return makeCryPlayRoute(name)
+    if (isCryName(name)) return makeCryPlayRoute(name)
   }
   if (path.startsWith(LIVE_ACTION_PREFIX)) {
     const name = path.slice(LIVE_ACTION_PREFIX.length)
-    if (name in LIVE_ACTIONS) return makeLiveActionRoute(name, LIVE_ACTIONS[name])
+    if (isLiveAction(name)) return makeLiveActionRoute(name, LIVE_ACTIONS[name])
   }
   return notFound
 }
 
-function startHttpServer(port) {
-  new HTTPServer({
+function startHttpServer(port: number): void {
+  const server = new HttpServer({
     io: Listener,
     port,
     onConnect(connection) {
       connection.accept({
-        onRequest(request) {
-          this.route = resolveRoute(request.path)
+        onRequest(this: HTTPConnection, request: HTTPRequest) {
+          this.route = resolveRoute(request.path) as unknown as HTTPConnectionHandlers
         },
-        onError(message) {
+        onError(this: HTTPConnection, message: unknown) {
           trace(`[dev] connection error before routing: ${message}\n`)
         },
-      })
+      } as unknown as HTTPConnectionHandlers)
     },
   })
+  void server
 }
 
-function startMdns() {
+function startMdns(): void {
   try {
-    new MDNS({ hostName: MDNS_HOST_NAME }, function (message, value) {
-      if (MDNS.hostName === message && value) {
+    const responder = new MDNS({ hostName: MDNS_HOST_NAME }, (message: number, value?: string) => {
+      if ((MDNS as unknown as { hostName: number }).hostName === message && value) {
         trace(`[dev] mdns claimed ${value}.local\n`)
       }
     })
+    void responder
   } catch (error) {
     trace(`[dev] mdns failed: ${error}\n`)
   }
 }
 
 /** GET /status・PUT /ota を公開し、mDNS で stackchan を名乗る。 */
-export function startDevServer() {
+export function startDevServer(): void {
   startHttpServer(HTTP_PORT)
   startMdns()
 }

@@ -1,5 +1,9 @@
 import { Outline } from 'commodetto/outline'
+import type { FaceContext } from 'face-context'
 import { defaultFaceContext } from 'face-context'
+import type { FaceSkinPalette } from 'face-skin'
+import type { Content as PiuContent } from 'piu/MC'
+import type {} from 'piu/shape'
 import Time from 'time'
 
 /**
@@ -33,29 +37,50 @@ const MICRO_DRIFT_Y_RATIO = 0.7
 const MIN_BLINK_HEIGHT_RATIO = 0.06 // Cozmo 流の「潰れるまばたき」の下限(0 だと完全に消える)
 // 呼吸の上下(ボブ): 吸うと目が浮き、吐くと沈む(胸の上下のアナロジー)。脈動
 // (サイズ変化)への追加(2026-07-08 ユーザー要望「サイズが変わりつつ上下もする」)。
-// liveliness の face.breathBobPx(globalThis.breathBobPx 経由)でライブ調整できる。
+// liveliness の face.breathBobPx(breathGlobal.breathBobPx 経由)でライブ調整できる。
 const BREATH_BOB_PX_DEFAULT = 3
 const QUANTIZE_PX = 0.5
 const OCCLUDER_SMOOTH_RATIO = 0.15 // occluder の値平滑化(emotion.js の 1Hz tick を毎フレームなめらかに見せる)
 const MIN_VISIBLE_LID_RATIO = 0.02 // これ未満の topLid/botArc は非表示にする(空のパスを作らない)
 const OCCLUDER_FILL = '#000000' // 背景と同色(黒)。目の上に重ねて変形に見せる(Cozmo 手法)
 
-function quantize(value, step) {
+type EyeSide = 'left' | 'right'
+type EyeOptions = { cx: number; cy: number; width?: number; height?: number; radius?: number; side: EyeSide }
+type EyeRect = { left: number; top: number; w: number; h: number }
+type PiuShape = PiuContent & { fillOutline: unknown; strokeOutline: unknown }
+type BreathGlobals = typeof globalThis & {
+  breathEyeRectL?: EyeRect
+  breathEyeRectR?: EyeRect
+  breathPulseDepth?: number
+  breathEyeScale?: number
+  breathMicroDrift?: number
+  breathGazeScale?: number
+  breathDbgGazeL?: number
+  breathDbgGazeR?: number
+  breathEyeLift?: number
+  breathBobPx?: number
+  breathTopLid?: number
+  breathTopAngleDeg?: number
+}
+const breathGlobal = globalThis as BreathGlobals
+
+function quantize(value: number, step: number) {
   return Math.round(value / step) * step
 }
 
 // v1.2.0 (E1) — emotion.js が毎 tick(1Hz)書く感情由来の目のパラメータ
-// (globalThis.breathTopLid/breathTopAngleDeg/breathEyeScale/breathEyeLift)。
+// (breathGlobal.breathTopLid/breathTopAngleDeg/breathEyeScale/breathEyeLift)。
 // occluder 側は同じ側の値をそのまま読む。ここでは eye 自身の eyeScale/eyeLift だけを
 // このモジュール内(update())で消費する。
 // eye-cozmo.js が毎フレーム書く「今フレームの最終的な目の矩形」(左右別)。occluder
 // (このファイル下部の TopLidOccluder)がここを読んで自分の位置・幅を
 // 合わせる。フレームごとの再アロケーションを避けるため、オブジェクト自体はモジュール
 // ロード時に一度だけ作り、以後はフィールドをその場で書き換える。
-if (!globalThis.breathEyeRectL) globalThis.breathEyeRectL = { left: 0, top: 0, w: 0, h: 0 }
-if (!globalThis.breathEyeRectR) globalThis.breathEyeRectR = { left: 0, top: 0, w: 0, h: 0 }
+if (!breathGlobal.breathEyeRectL) breathGlobal.breathEyeRectL = { left: 0, top: 0, w: 0, h: 0 }
+if (!breathGlobal.breathEyeRectR) breathGlobal.breathEyeRectR = { left: 0, top: 0, w: 0, h: 0 }
 
-export const CozmoEye = Shape.template((opts) => {
+export const CozmoEye = Shape.template((raw: object) => {
+  const opts = raw as EyeOptions
   const cx = opts.cx
   const cy = opts.cy
   const baseWidth = opts.width ?? 57
@@ -70,13 +95,13 @@ export const CozmoEye = Shape.template((opts) => {
     height: baseHeight,
     skin: new Skin({ fill: defaultFaceContext.theme.primary }),
     Behavior: class extends Behavior {
-      startTicks = null
+      startTicks: number | null = null
       lastOutlineW = -1
       lastOutlineH = -1
       lastLeft = Number.NaN
       lastTop = Number.NaN
 
-      onCreate(shape) {
+      override onCreate(shape: PiuShape) {
         try {
           this.rebuildOutline(shape, baseWidth, baseHeight)
           this.lastOutlineW = baseWidth
@@ -86,7 +111,7 @@ export const CozmoEye = Shape.template((opts) => {
         }
       }
 
-      onFaceSkin(shape, palette) {
+      onFaceSkin(shape: PiuShape, palette: FaceSkinPalette) {
         try {
           shape.skin = palette.palette
           shape.state = palette.primaryState
@@ -95,7 +120,7 @@ export const CozmoEye = Shape.template((opts) => {
         }
       }
 
-      onFaceContext(shape, face) {
+      onFaceContext(shape: PiuShape, face: FaceContext) {
         try {
           this.update(shape, face)
         } catch (error) {
@@ -103,7 +128,7 @@ export const CozmoEye = Shape.template((opts) => {
         }
       }
 
-      update(shape, face) {
+      update(shape: PiuShape, face: FaceContext) {
         if (this.startTicks === null) {
           this.startTicks = Time.ticks
         }
@@ -112,10 +137,10 @@ export const CozmoEye = Shape.template((opts) => {
         const eye = face.eyes?.[side]
         const mouthOpen = face.mouth?.open ?? BREATH_OPEN_MIN
         const pulse = Math.max(0, (mouthOpen - BREATH_OPEN_MIN) / BREATH_OPEN_RANGE)
-        const breathDepth = globalThis.breathPulseDepth ?? BREATH_DEPTH_DEFAULT
+        const breathDepth = breathGlobal.breathPulseDepth ?? BREATH_DEPTH_DEFAULT
         // v1.2.0 (E1) — emotion.js の eyeScale(1 + 0.06a)を脈動スケールに乗算する
         // (覚醒で目が大きく・沈静で小さく。疑似プロクセミクス)。
-        const emoScale = globalThis.breathEyeScale ?? 1
+        const emoScale = breathGlobal.breathEyeScale ?? 1
         const scaleY = (1 + pulse * breathDepth) * emoScale
         const scaleX = (1 + pulse * breathDepth * BREATH_SCALE_X_RATIO) * emoScale
 
@@ -124,23 +149,23 @@ export const CozmoEye = Shape.template((opts) => {
         const w = Math.max(1, quantize(baseWidth * scaleX, QUANTIZE_PX))
         const h = Math.max(1, quantize(baseHeight * scaleY * blinkOpen, QUANTIZE_PX))
 
-        const driftPx = globalThis.breathMicroDrift ?? MICRO_DRIFT_PX_DEFAULT
+        const driftPx = breathGlobal.breathMicroDrift ?? MICRO_DRIFT_PX_DEFAULT
         const driftX = driftPx * Math.sin((2 * Math.PI * elapsed) / MICRO_DRIFT_PERIOD_X_MS)
         const driftY = driftPx * MICRO_DRIFT_Y_RATIO * Math.cos((2 * Math.PI * elapsed) / MICRO_DRIFT_PERIOD_Y_MS)
 
-        // liveliness.js の gaze.pixelScale が globalThis.breathGazeScale に反映する
+        // liveliness.js の gaze.pixelScale が breathGlobal.breathGazeScale に反映する
         // (parts/eye.ts の瞳オフセットと同じ既存機構をそのまま流用。既定 2 = upstream 相当)。
-        const gazeScale = globalThis.breathGazeScale ?? 2
+        const gazeScale = breathGlobal.breathGazeScale ?? 2
         const gazeX = eye ? (eye.gazeX ?? 0) * gazeScale : 0
         const gazeY = eye ? (eye.gazeY ?? 0) * gazeScale : 0
         // デバッグ計器(GET /status の dbgGaze から読む。一瞥の符号バグ調査 2026-07-07)
-        if (side === 'left') globalThis.breathDbgGazeL = gazeX
-        else globalThis.breathDbgGazeR = gazeX
+        if (side === 'left') breathGlobal.breathDbgGazeL = gazeX
+        else breathGlobal.breathDbgGazeR = gazeX
 
         // v1.2.0 (E1) — emotion.js の eyeLift(a*4px)。覚醒で上へ(y は画面下方向が正なので減算)。
-        const emoLift = globalThis.breathEyeLift ?? 0
+        const emoLift = breathGlobal.breathEyeLift ?? 0
         // 呼吸ボブ: 吸う(pulse→1)と浮き、吐く(pulse→0)と沈む。
-        const bobY = pulse * (globalThis.breathBobPx ?? BREATH_BOB_PX_DEFAULT)
+        const bobY = pulse * (breathGlobal.breathBobPx ?? BREATH_BOB_PX_DEFAULT)
 
         const left = quantize(cx - w / 2 + gazeX + driftX, QUANTIZE_PX)
         const top = quantize(cy - h / 2 + gazeY + driftY - emoLift - bobY, QUANTIZE_PX)
@@ -154,19 +179,20 @@ export const CozmoEye = Shape.template((opts) => {
         if (sizeChanged || left !== this.lastLeft || top !== this.lastTop) {
           this.lastLeft = left
           this.lastTop = top
-          shape.coordinates = { left, top, width: w, height: h }
+          shape.coordinates = { left, top, width: w, height: h } as never
         }
 
         // occluder(topLid/botArc)がこのフレームの最終矩形に追従するためのブリッジ。
         // 事前に確保済みのオブジェクトのフィールドを書き換えるだけ(アロケーションなし)。
-        const rect = side === 'left' ? globalThis.breathEyeRectL : globalThis.breathEyeRectR
+        const rect = side === 'left' ? breathGlobal.breathEyeRectL : breathGlobal.breathEyeRectR
+        if (!rect) return
         rect.left = left
         rect.top = top
         rect.w = w
         rect.h = h
       }
 
-      rebuildOutline(shape, w, h) {
+      rebuildOutline(shape: PiuShape, w: number, h: number) {
         const path = Outline.RoundRectPath(0, 0, w, h, radius)
         shape.fillOutline = Outline.fill(path)
         shape.strokeOutline = undefined
@@ -180,13 +206,14 @@ export const CozmoEye = Shape.template((opts) => {
  * 変えず、黒い遮蔽シェイプを目の上に重ねて変形に見せる(背景が黒なので遮蔽 = 変形。
  * Cozmo と同じ手法)。breath-face.js が各 CozmoEye の直後にこれらを contents へ追加する。
  *
- * 位置合わせは globalThis.breathEyeRectL/R(CozmoEye が毎フレーム書く最終矩形)を読む。
+ * 位置合わせは breathGlobal.breathEyeRectL/R(CozmoEye が毎フレーム書く最終矩形)を読む。
  * 形状パラメータ(topLid/topAngleDeg/botArc)は emotion.js が 1Hz で globalThis に書く
  * 値をそのまま読み、occluder 側で軽く指数平滑化する(OCCLUDER_SMOOTH_RATIO)ことで
  * 1 秒ごとの値更新を毎フレームなめらかに見せる(値そのものの補間は emotion.js ではなく
  * 描画側の責務にして、emotion.js は単純な状態機械のままにする)。
  */
-export const TopLidOccluder = Shape.template((opts) => {
+export const TopLidOccluder = Shape.template((raw: object) => {
+  const opts = raw as EyeOptions
   const side = opts.side
   const initialWidth = opts.width ?? 57
   const initialHeight = opts.height ?? 68
@@ -206,7 +233,7 @@ export const TopLidOccluder = Shape.template((opts) => {
       lastLeft = Number.NaN
       lastTop = Number.NaN
 
-      onCreate(shape) {
+      override onCreate(shape: PiuShape) {
         try {
           const path = Outline.PolygonPath(0, 0, 1, 0, 1, 1, 0, 1)
           shape.fillOutline = Outline.fill(path)
@@ -216,7 +243,7 @@ export const TopLidOccluder = Shape.template((opts) => {
         }
       }
 
-      onFaceContext(shape, face) {
+      onFaceContext(shape: PiuShape, face: FaceContext) {
         try {
           this.update(shape, face)
         } catch (error) {
@@ -224,8 +251,8 @@ export const TopLidOccluder = Shape.template((opts) => {
         }
       }
 
-      update(shape, face) {
-        const rect = side === 'left' ? globalThis.breathEyeRectL : globalThis.breathEyeRectR
+      update(shape: PiuShape, face: FaceContext) {
+        const rect = side === 'left' ? breathGlobal.breathEyeRectL : breathGlobal.breathEyeRectR
         if (!rect || rect.w <= 0) {
           shape.visible = false
           return
@@ -233,7 +260,7 @@ export const TopLidOccluder = Shape.template((opts) => {
 
         const eye = face.eyes?.[side]
         const blinkOpen = eye ? eye.open : 1
-        const emoTopLid = globalThis.breathTopLid ?? 0
+        const emoTopLid = breathGlobal.breathTopLid ?? 0
         // まばたき(eye.open)との合成は「小さい方の開き」を採用(= より閉じた方が勝つ)。
         const targetLid = Math.max(emoTopLid, 1 - blinkOpen)
         this.smLid += (targetLid - this.smLid) * OCCLUDER_SMOOTH_RATIO
@@ -243,7 +270,7 @@ export const TopLidOccluder = Shape.template((opts) => {
           return
         }
 
-        const angleDeg = globalThis.breathTopAngleDeg ?? 0
+        const angleDeg = breathGlobal.breathTopAngleDeg ?? 0
         const lidH = quantize(Math.min(rect.h, this.smLid * rect.h), QUANTIZE_PX)
         const tiltPx = quantize(Math.tan((angleDeg * Math.PI) / 180) * (rect.w / 2), QUANTIZE_PX)
         const inner = Math.max(0, lidH - tiltPx / 2)
@@ -275,7 +302,7 @@ export const TopLidOccluder = Shape.template((opts) => {
         if (changed || left !== this.lastLeft || top !== this.lastTop) {
           this.lastLeft = left
           this.lastTop = top
-          shape.coordinates = { left, top, width: w, height: Math.max(1, Math.max(bottomLeft, bottomRight)) }
+          shape.coordinates = { left, top, width: w, height: Math.max(1, Math.max(bottomLeft, bottomRight)) } as never
         }
       }
     },

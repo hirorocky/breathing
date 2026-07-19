@@ -9,15 +9,15 @@ breath は MOD パーティション上の独立 MOD ではなく、ホストフ
 1. `manifest_breath_deploy.json` が `breath/mod` と依存モジュールを登録する
 2. `stack-chan/firmware/stackchan/default-mods/mod.ts` が `breath/mod` を import する
 3. `main.ts` は `breathHostMod` が有効なとき MOD パーティションを使用しない
-4. Robot 作成後に `overlay/mods/breath/mod.js` の `onRobotCreated(robot)` を呼ぶ
+4. Robot 作成後に `overlay/mods/breath/mod.ts` の `onRobotCreated(robot)` を呼ぶ
 
-`overlay/mods/breath/*.js` をファイルパスで直接 import せず、manifest の論理モジュール名を使います。新しいファイルを追加するときは `manifest_breath_deploy.json` の `modules` に登録し、たとえば `import ... from 'breath/example'` のように参照します。
+`overlay/mods/breath/*.ts` をファイルパスで直接 import せず、manifest の論理モジュール名を使います。新しいファイルを追加するときは `manifest_breath_deploy.json` の `modules` に登録し、たとえば `import ... from 'breath/example'` のように参照します。
 
 ## エントリーポイント
 
-`overlay/mods/breath/mod.js` は `onRobotCreated(robot)` を export し、各機能を時間差で起動します。新しい機能は単独モジュールとして実装し、エントリーポイントでは初期化だけを行います。
+`overlay/mods/breath/mod.ts` は `onRobotCreated(robot)` を export し、各機能を時間差で起動します。新しい機能は単独モジュールとして実装し、エントリーポイントでは初期化だけを行います。
 
-```js
+```ts
 import { startExample } from 'breath/example'
 
 export function onRobotCreated(robot) {
@@ -29,7 +29,7 @@ export function onRobotCreated(robot) {
 }
 ```
 
-実際には既存機能との起動順や I/O 競合を考慮し、`mod.js` の段階起動へ追加します。長時間処理や待機で `onRobotCreated` を塞がないでください。
+実際には既存機能との起動順や I/O 競合を考慮し、`mod.ts` の段階起動へ追加します。長時間処理や待機で `onRobotCreated` を塞がないでください。
 
 ## 実装上の原則
 
@@ -40,6 +40,20 @@ export function onRobotCreated(robot) {
 - PIU を使うモジュールはホスト manifest に登録する。MOD パーティションへ書く補助 MODでは native モジュールを利用できない。
 - 設定値は入力を検証・クランプし、共有の `breath/param-store` を使って `Preference` に保存する。
 - 音声内容は保存・解釈せず、マイクのレベル値と検出イベントだけを扱う。
+
+breath のソースは strict TypeScript とし、暗黙の `any` や未処理の `null` / `undefined` を残さない。変更後はリポジトリルートの `biome.json` を使った Biome check と、breath 用 release ビルドを通す。
+
+## エディタのTypeScript設定
+
+リポジトリルートの `tsconfig.json` は、実際のビルド設定である `stack-chan/firmware/tsconfig.breath.json` を継承するエディタ用の入口です。`overlay/mods/` のファイルを開くときは、リポジトリルートをワークスペースとして開きます。
+
+- Zed: `.zed/settings.json` が `vtsls` にTS6互換API（`@typescript/typescript6`）を使わせる
+- VS Code: `.vscode/settings.json` が公式のTypeScript 7拡張（`TypeScriptTeam.native-preview`）を有効にする
+- 設定変更後にTS2307が残る場合は、言語サーバーを再起動してから `npx --prefix stack-chan/firmware tsc -p tsconfig.json --noEmit` を実行する
+
+プロジェクトのCLI型チェックはTypeScript 7を使う。`@typescript/native` が `.bin/tsc` をTS7へ固定する。TypeScript 7はまだ従来のCompiler APIを提供しないため、ZedのvtslsとTypeDocには公式の `@typescript/typescript6` を互換APIとして割り当てている。TypeDocは `scripts/typedoc-ts6-loader.mjs` 経由で実行し、既存StackChan全体に残るTypeDoc対象外の型エラーは `--skipErrorChecking` で除外する。この併用はエディタ・APIドキュメント生成のためだけで、プロジェクトの型チェックをTypeScript 6へ戻すものではない。
+
+`embedded:*`、`breath/*`、`m5stackchan/*` はModdableの論理モジュール名なので、エディタのエラーを消すために相対importへ変更したり、`declare module '*'` で隠したりしない。
 
 ## CoreS3 のスワイプ入力
 
@@ -57,16 +71,16 @@ rg -n "ft6206(_async)?" ~/.local/share/moddable/build/tmp/esp32/m5stackchan_core
 
 | モジュール | 責務 |
 |---|---|
-| `mod.js` | 段階起動と呼吸ループ |
+| `mod.ts` | 段階起動と呼吸ループ |
 | `face/` | breath 専用の顔とレンダラー |
-| `emotion.js` | valence / arousal 状態と表情修飾 |
-| `liveliness.js` | 視線、深呼吸、murmur のスケジュール |
-| `mic.js` | マイク特徴量とイベント検出 |
-| `reactions.js` | マイクイベントへの反応 |
-| `posture.js` | 感情姿勢と startle リコイル |
-| `led.js` | 感情と呼吸に連動するヘッド LED |
-| `cry.js` | 鳴き声の生成・再生 |
-| `status-bar.js` / `settings-bar.js` | 状態表示と端末設定 |
+| `emotion.ts` | valence / arousal 状態と表情修飾 |
+| `liveliness.ts` | 視線、深呼吸、murmur のスケジュール |
+| `mic.ts` | マイク特徴量とイベント検出 |
+| `reactions.ts` | マイクイベントへの反応 |
+| `posture.ts` | 感情姿勢と startle リコイル |
+| `led.ts` | 感情と呼吸に連動するヘッド LED |
+| `cry.ts` | 鳴き声の生成・再生 |
+| `status-bar.ts` / `settings-bar.ts` | 状態表示と端末設定 |
 | `dev/` | ログ、状態取得、パラメータ調整、OTA |
 
 既存責務と重なる機能を別モジュールへ追加せず、担当モジュールの公開関数を通して接続します。

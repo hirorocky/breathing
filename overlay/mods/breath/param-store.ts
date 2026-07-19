@@ -12,11 +12,15 @@ import Preference from 'preference'
 
 const PREF_DOMAIN = 'breath'
 
-export function deepClone(value) {
-  return JSON.parse(JSON.stringify(value))
+type JsonPrimitive = string | number | boolean | null
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue }
+export type ClampRanges = Record<string, number[]>
+
+export function deepClone<T extends JsonValue>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
-function isPlainObject(value) {
+function isPlainObject(value: unknown): value is Record<string, JsonValue> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
@@ -25,34 +29,38 @@ function isPlainObject(value) {
  * 未知のキー・型不一致・長さ不一致は黒く無視して `base` 側の値を残す
  * (「壊れた入力では変更しない」方針)。
  */
-export function mergeValidated(base, patch) {
+export function mergeValidated<T extends JsonValue>(base: T, patch: unknown): T {
   if (Array.isArray(base)) {
     if (!Array.isArray(patch) || patch.length !== base.length) return base
-    return patch.map((value, i) => (typeof value === typeof base[i] && typeof value !== 'object' ? value : base[i]))
+    return patch.map((value, i) =>
+      typeof value === typeof base[i] && typeof value !== 'object' ? value : base[i],
+    ) as T
   }
   if (isPlainObject(base)) {
     if (!isPlainObject(patch)) return base
-    const merged = { ...base }
+    const merged: Record<string, JsonValue> = { ...base }
     for (const key of Object.keys(patch)) {
       if (!(key in base)) continue
-      merged[key] = mergeValidated(base[key], patch[key])
+      merged[key] = mergeValidated(base[key] ?? null, patch[key])
     }
-    return merged
+    return merged as T
   }
-  return typeof patch === typeof base ? patch : base
+  return (typeof patch === typeof base ? patch : base) as T
 }
 
 /**
  * `clampRanges` は `{ 'section.key': [min, max] }` 形式。`target` を書き換えて返す
  * (`liveliness.js` の CLAMP_RANGES と同じ形式だが、呼び出し側が渡す引数になった点だけが違う)。
  */
-export function sanitizeParams(target, clampRanges) {
+export function sanitizeParams<T extends Record<string, JsonValue>>(target: T, clampRanges: ClampRanges): T {
   for (const path of Object.keys(clampRanges)) {
     const [section, key] = path.split('.')
-    const [min, max] = clampRanges[path]
-    const value = target[section]?.[key]
+    const [min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY] = clampRanges[path] ?? []
+    if (!(section && key)) continue
+    const sectionValue = target[section]
+    const value = isPlainObject(sectionValue) ? sectionValue[key] : undefined
     if (typeof value === 'number') {
-      target[section][key] = Math.min(max, Math.max(min, value))
+      ;(sectionValue as Record<string, JsonValue>)[key] = Math.min(max, Math.max(min, value))
     }
   }
   return target
@@ -62,11 +70,11 @@ export function sanitizeParams(target, clampRanges) {
  * Preference から復元する。無ければ `defaults` の deep clone。
  * 壊れていれば trace して `defaults` の deep clone にフォールバックする(例外は投げない)。
  */
-export function loadParams(key, defaults, clampRanges) {
+export function loadParams<T extends Record<string, JsonValue>>(key: string, defaults: T, clampRanges: ClampRanges): T {
   try {
     const raw = Preference.get(PREF_DOMAIN, key)
     if (!raw) return deepClone(defaults)
-    const saved = JSON.parse(raw)
+    const saved: unknown = JSON.parse(String(raw))
     const restored = sanitizeParams(mergeValidated(defaults, saved), clampRanges)
     trace(`[param-store] restored '${key}' from Preference\n`)
     return restored
@@ -77,7 +85,7 @@ export function loadParams(key, defaults, clampRanges) {
 }
 
 /** Preference へ保存する。失敗しても例外は投げない(trace のみ)。 */
-export function persistParams(key, params) {
+export function persistParams(key: string, params: JsonValue): void {
   try {
     Preference.set(PREF_DOMAIN, key, JSON.stringify(params))
   } catch (error) {

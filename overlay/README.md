@@ -9,6 +9,7 @@
 | `../stack-chan/` | fork（submodule、`breath` ブランチ） |
 | `docs/my-cores3/` | CoreS3 / K151-R 向けカスタマイズガイド |
 | `mods/breath/` | breathing 固有の表現・反応・観測機能（探求の本体） |
+| `mods/breath-policy/` | ホストを焼き直さず更新するハードウェア非依存 policy MOD |
 | `mods/breath-clear/` | MOD パーティションを空にする補助 MOD |
 | `scripts/` | OTA・ログ・IP 発見・マイク監視などの実機運用スクリプト |
 | `tools/` | アセット生成などの開発用ツール |
@@ -17,28 +18,29 @@
 
 | パス | 内容 |
 |---|---|
-| `mods/breath/mod.js` | `onRobotCreated` を起点とする段階起動と呼吸ループ |
+| `mods/breath/mod.ts` | `onRobotCreated` を起点とする段階起動と呼吸ループ |
 | `mods/breath/face/` | 目・表情・呼吸を描画する顔とレンダラー |
-| `mods/breath/emotion.js` | valence × arousal の感情状態 |
-| `mods/breath/reactions.js` | マイクイベントなどに対する微反応 |
-| `mods/breath/posture.js` | サーボによる感情姿勢と呼吸ボブ |
-| `mods/breath/led.js` | ヘッド LED による環境光表現 |
-| `mods/breath/power.js` | 電源ボタンの orderly shutdown、LED消灯、充電起動後の再OFF |
-| `mods/breath/cry.js` | 鳴き声の再生制御 |
-| `mods/breath/liveliness.js` | 視線・深呼吸・murmur などの生存感エンジン |
-| `mods/breath/mic.js` | 音声内容を保存しないマイク観測とイベント検出 |
-| `mods/breath/param-store.js` | パラメータの検証と Preference 永続化 |
-| `mods/breath/status-bar.js` | 画面上端からの下スワイプで開く時刻・バッテリー表示 |
-| `mods/breath/settings-bar.js` | 画面下端からの上スワイプで開く全画面2層設定（音量・画面・LED・2次元感情） |
+| `mods/breath/emotion.ts` | valence × arousal の感情状態 |
+| `mods/breath/reactions.ts` | マイクイベントなどに対する微反応 |
+| `mods/breath/posture.ts` | サーボによる感情姿勢と呼吸ボブ |
+| `mods/breath/led.ts` | ヘッド LED による環境光表現 |
+| `mods/breath/power.ts` | 電源ボタンの orderly shutdown、LED消灯、充電起動後の再OFF |
+| `mods/breath/cry.ts` | 鳴き声の再生制御 |
+| `mods/breath/liveliness.ts` | 視線・深呼吸・murmur などの生存感エンジン |
+| `mods/breath/mic.ts` | 音声内容を保存しないマイク観測とイベント検出 |
+| `mods/breath/param-store.ts` | パラメータの検証と Preference 永続化 |
+| `mods/breath/status-bar.ts` | 画面上端からの下スワイプで開く時刻・バッテリー表示 |
+| `mods/breath/settings-bar.ts` | 画面下端からの上スワイプで開く全画面2層設定（音量・画面・LED・2次元感情） |
 | `mods/breath/dev/` | UDP ログ、状態取得、OTA、IP 発見などの Wi-Fi 開発機能 |
-| `mods/breath/touch-debug.js` | 未接続のタッチデバッグ用モジュール |
+| `mods/breath/touch-debug.ts` | 未接続のタッチデバッグ用モジュール |
 
 ### スクリプトとツール
 
 | パス | 内容 |
 |---|---|
 | `scripts/ota-deploy.sh` | Wi-Fi OTA のビルド・転送・反映確認 |
-| `scripts/logs.sh` | UDP ログ受信（port 8686） |
+| `scripts/policy-deploy.sh` | policy MOD のrelease build・Wi-Fi更新・無効化・反映確認 |
+| `scripts/logs.sh` | UDP ログ受信（port 8686）。第2引数でJSONL保存先を指定できる |
 | `scripts/stackchan-ip.sh` | UDP ビーコンからデバイス IP を発見（port 8687） |
 | `scripts/mic-monitor.sh` | マイクレベルの UDP モニター（port 8688） |
 | `tools/cry/synth.py` | 鳴き声アセット生成ツール |

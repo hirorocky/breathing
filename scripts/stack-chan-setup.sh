@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SUBMODULE="$ROOT/stack-chan"
 
+# Keep repository-level checks active for every local commit.
+git -C "$ROOT" config core.hooksPath .githooks
+
 if [ ! -f "$SUBMODULE/firmware/package.json" ]; then
   echo "Initializing stack-chan submodule ..."
   git -C "$ROOT" submodule update --init --recursive stack-chan
